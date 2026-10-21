@@ -1,0 +1,39 @@
+.application-loading {
+  min-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 32px;
+  background: #faf8f4;
+  color: #382335;
+  font:
+    15px/1.7 "DM Sans",
+    sans-serif;
+  text-align: center;
+}
+.application-loading h1 {
+  font-size: 30px;
+  line-height: 1.3;
+}
+.application-loading p {
+  max-width: 500px;
+}
+.application-loading button {
+  border: 0;
+  border-radius: 6px;
+  background: #674e77;
+  color: white;
+  padding: 13px 24px;
+  cursor: pointer;
+  font: inherit;
+}
+.application-loading a {
+  color: #674e77;
+  text-decoration: underline;
+}
+.application-loading :focus-visible {
+  outline: 3px solid #9470ad;
+  outline-offset: 4px;
+}

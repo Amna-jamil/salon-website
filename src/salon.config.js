@@ -1,6 +1,8 @@
 /**
- * YOUR SALON STARTS HERE
- * Replace the demo content, then set demoMode: false.
+ * INITIAL DATABASE SEED AND PORTABLE CONFIGURATION
+ * After initial setup, use the authorized admin panel; saved SQLite settings
+ * are the source of truth. This file does not overwrite existing database data.
+ * Replace the demo content before launch, then import with demoMode: false.
  * Photos live in public/images; paths start with /images/.
  * Empty optional contact/address/social values hide their links automatically.
  * WhatsApp uses international digits only, without a leading + or spaces.

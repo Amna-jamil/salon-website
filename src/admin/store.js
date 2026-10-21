@@ -1,7 +1,5 @@
 import { salon as defaults } from "../salon.config.js";
 
-export const CONFIG_KEY = "luma.salon.config.v1";
-export const BOOKINGS_KEY = "luma.salon.requests.v1";
 export const STATUSES = ["Pending", "Confirmed", "Completed", "Cancelled"];
 
 export function validateConfig(config) {
@@ -117,37 +115,6 @@ export function validateConfig(config) {
   return config;
 }
 
-export function loadConfig(storage) {
-  try {
-    storage ||= globalThis.localStorage;
-    const raw = storage.getItem(CONFIG_KEY);
-    return {
-      config: raw ? validateConfig(JSON.parse(raw)) : structuredClone(defaults),
-      error: "",
-    };
-  } catch {
-    return {
-      config: structuredClone(defaults),
-      error:
-        "Saved salon settings could not be read. Default settings are shown. Export any recoverable data or reset settings in Website settings.",
-    };
-  }
-}
-
-export function saveConfig(config, storage) {
-  validateConfig(config);
-  try {
-    (storage || globalThis.localStorage).setItem(
-      CONFIG_KEY,
-      JSON.stringify(config),
-    );
-  } catch {
-    throw new Error(
-      "Could not save. Browser storage may be full or disabled. Try smaller images, or export your changes.",
-    );
-  }
-}
-
 export function validateRequests(requests) {
   const ids = new Set();
   if (!Array.isArray(requests) || requests.length > 2000)
@@ -187,36 +154,7 @@ export function validateRequests(requests) {
   return requests;
 }
 
-export function loadRequests(storage) {
-  try {
-    storage ||= globalThis.localStorage;
-    const raw = storage.getItem(BOOKINGS_KEY);
-    const requests = validateRequests(raw ? JSON.parse(raw) : []);
-    return { requests, error: "" };
-  } catch {
-    return {
-      requests: [],
-      error:
-        "The appointment inbox could not be read. Browser storage may be disabled or contain damaged data. Nothing has been overwritten.",
-    };
-  }
-}
-
-export function saveRequests(requests, storage) {
-  validateRequests(requests);
-  try {
-    (storage || globalThis.localStorage).setItem(
-      BOOKINGS_KEY,
-      JSON.stringify(requests),
-    );
-  } catch {
-    throw new Error(
-      "Could not save the request. Browser storage may be full or disabled. Your existing data has not been changed.",
-    );
-  }
-}
-
-export function makeRequest(values, config, source = "Manual demo") {
+export function makeRequest(values, config, source = "Manual") {
   const service = config.services
     .flatMap((category) => category.items)
     .find((item) => item.id === values.service);

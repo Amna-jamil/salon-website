@@ -1,15 +1,11 @@
 import "./fonts.css";
 import "./style.css";
-import {
-  loadConfig,
-  loadRequests,
-  saveRequests,
-  makeRequest,
-  CONFIG_KEY,
-} from "./admin/store.js";
+import { api } from "./api.js";
+import { googleMapsLink } from "./locations.js";
+import { mountChat } from "./chat.js";
 import { localDateTime, validateBooking, whatsappLink } from "./booking.js";
 
-const { config: salon } = loadConfig();
+const { config: salon, revision: salonRevision } = await api("/api/salon");
 
 const escape = (value) =>
   String(value).replace(
@@ -97,7 +93,9 @@ if (!salon.demoMode) {
         name: `${salon.name} — ${branch.name}`,
         address: { "@type": "PostalAddress", ...branch.seoAddress },
         ...(branch.phone && { telephone: branch.phone }),
-        ...(branch.mapUrl && { hasMap: branch.mapUrl }),
+        ...(googleMapsLink(branch.address) && {
+          hasMap: googleMapsLink(branch.address),
+        }),
       })),
   });
   document.head.append(schema);
@@ -168,17 +166,17 @@ document.querySelector("#app").innerHTML = `
 
     <section class="section locations-section" id="locations" aria-labelledby="locations-title"><div class="container">
       <div class="section-heading"><div><p class="eyebrow">FIND YOUR LITTLE ESCAPE</p><h2 id="locations-title">A space to <em>settle in.</em></h2></div><p>${salon.demoMode ? "Two imagined studios. One lovely feeling.<br>Real locations can be added before launch." : "Choose your studio.<br>We’ll make you feel at home."}</p></div>
-      <div class="branch-grid">${salon.branches.map((branch) => `<article class="branch-card">${photo(branch.image, branch.imageAlt)}<div class="branch-content"><p class="eyebrow">${escape(branch.label)}</p><h3>${escape(branch.name)}</h3><p>${escape(branch.description)}</p>${branch.address ? `<p class="branch-address">${icon("pin")}${escape(branch.address)}</p>` : '<p class="unconfigured">Demo studio · Address to be added</p>'}<details><summary>Studio opening hours ${icon("plus")}</summary>${hours(branch.hours || salon.contact.hours)}</details><div class="branch-actions"><a class="text-link" href="#book" data-branch="${escape(branch.id)}">Choose this studio ${icon("arrow")}</a>${branch.mapUrl ? `<a class="icon-link" href="${escape(branch.mapUrl)}" target="_blank" rel="noopener noreferrer" aria-label="Map to ${escape(branch.name)} (opens new tab)">${icon("pin")}</a>` : ""}${branch.phone ? `<a class="icon-link" href="${phoneHref(branch.phone)}" aria-label="Call ${escape(branch.name)}">${icon("phone")}</a>` : ""}</div></div></article>`).join("")}</div>
+      <div class="branch-grid">${salon.branches.map((branch) => `<article class="branch-card">${photo(branch.image, branch.imageAlt)}<div class="branch-content"><p class="eyebrow">${escape(branch.label)}</p><h3>${escape(branch.name)}</h3><p>${escape(branch.description)}</p>${branch.address ? `<p class="branch-address">${icon("pin")}${escape(branch.address)}</p>` : '<p class="unconfigured">Demo studio · Address to be added</p>'}<details><summary>Studio opening hours ${icon("plus")}</summary>${hours(branch.hours || salon.contact.hours)}</details><div class="branch-actions"><a class="text-link" href="#book" data-branch="${escape(branch.id)}">Choose this studio ${icon("arrow")}</a>${googleMapsLink(branch.address) ? `<a class="icon-link" href="${escape(googleMapsLink(branch.address))}" target="_blank" rel="noopener noreferrer" aria-label="Open in Google Maps: ${escape(branch.name)} (opens new tab)" title="Open in Google Maps">${icon("pin")}</a>` : ""}${branch.phone ? `<a class="icon-link" href="${phoneHref(branch.phone)}" aria-label="Call ${escape(branch.name)}">${icon("phone")}</a>` : ""}</div></div></article>`).join("")}</div>
     </div></section>
 
     <section class="booking-section section" id="book" aria-labelledby="booking-title"><div class="container booking-grid">
-      <div class="booking-copy"><p class="eyebrow">YOUR NEXT GOOD HAIR DAY STARTS HERE</p><h2 id="booking-title">Let’s make<br>time for <em>you.</em></h2><p>${escape(salon.booking.introduction)}</p><div class="booking-detail">${icon("clock")}<span>Choose your preferred time.<br>Availability is confirmed by the salon.</span></div>${waLink ? `<a class="text-link" href="${escape(waLink)}" target="_blank" rel="noopener noreferrer">${icon("whatsapp")} Prefer WhatsApp? Let’s chat ${icon("diagonal")}</a>` : ""}${salon.demoMode ? '<p class="booking-disclaimer">You’re exploring a fictional salon demo. You can optionally save a request to this browser’s demo inbox. The WhatsApp number is a demo number.</p>' : ""}</div>
+      <div class="booking-copy"><p class="eyebrow">YOUR NEXT GOOD HAIR DAY STARTS HERE</p><h2 id="booking-title">Let’s make<br>time for <em>you.</em></h2><p>${escape(salon.booking.introduction)}</p><div class="booking-detail">${icon("clock")}<span>Choose your preferred time.<br>Availability is confirmed by the salon.</span></div>${waLink ? `<a class="text-link" href="${escape(waLink)}" target="_blank" rel="noopener noreferrer">${icon("whatsapp")} Prefer WhatsApp? Let’s chat ${icon("diagonal")}</a>` : ""}${salon.demoMode ? '<p class="booking-disclaimer">You’re exploring a fictional salon demo. You can preview a request, then send it to the salon inbox. The WhatsApp number is a demo number.</p>' : ""}</div>
       <div class="booking-panel"><div class="form-heading"><h3>A moment, reserved for you.</h3><span>APPOINTMENT ENQUIRY</span></div><p class="form-note">${salon.demoMode ? "Try the form. Nothing is sent or booked." : "Prepare an enquiry below, then send it on WhatsApp. This form does not submit to a booking system."}</p>
         <form id="booking-form" novalidate>
           <div class="form-row"><div class="field"><label for="name">Your name <span aria-hidden="true">*</span></label><input id="name" name="name" autocomplete="name" placeholder="Full name" required maxlength="100" aria-describedby="name-error"><span class="field-error" id="name-error"></span></div><div class="field"><label for="phone">Phone number <span aria-hidden="true">*</span></label><input id="phone" name="phone" type="tel" autocomplete="tel" placeholder="Your phone number" required maxlength="30" aria-describedby="phone-error"><span class="field-error" id="phone-error"></span></div></div>
           <div class="form-row"><div class="field"><label for="service">Your service <span aria-hidden="true">*</span></label><select id="service" name="service" required aria-describedby="service-error"><option value="">Choose a little self-care</option>${salon.services.map((category) => `<optgroup label="${escape(category.name)}">${category.items.map((item) => `<option value="${escape(item.id)}">${escape(item.name)} — from ${formatPrice(item.price)}</option>`).join("")}</optgroup>`).join("")}</select><span class="field-error" id="service-error"></span></div><div class="field"><label for="branch">Preferred studio <span aria-hidden="true">*</span></label><select id="branch" name="branch" required aria-describedby="branch-error"><option value="">Choose your studio</option>${salon.branches.map((branch) => `<option value="${escape(branch.id)}">${escape(branch.name)}</option>`).join("")}</select><span class="field-error" id="branch-error"></span></div></div>
           <div class="field"><label for="datetime">Preferred date & time <span aria-hidden="true">*</span></label><input id="datetime" name="datetime" type="datetime-local" required aria-describedby="datetime-hint datetime-error"><small id="datetime-hint">Salon timezone: ${escape(salon.timeZone)}. All fields are required.</small><span class="field-error" id="datetime-error"></span></div>
-          <button class="button button-dark submit-button" type="submit">${salon.demoMode ? "Preview appointment request" : "Prepare appointment request"} ${icon("diagonal")}</button><p class="privacy-note">Your details stay on this page unless you choose to save a local demo request or continue to WhatsApp.</p>
+          <button class="button button-dark submit-button" type="submit">${salon.demoMode ? "Preview appointment request" : "Prepare appointment request"} ${icon("diagonal")}</button><p class="privacy-note">Your details are shared with the salon when you send your request. Availability is confirmed separately.</p>
         </form>
         <div class="confirmation" id="confirmation" role="status" aria-live="polite" tabindex="-1" hidden></div>
       </div>
@@ -188,7 +186,7 @@ document.querySelector("#app").innerHTML = `
   </main>
   <footer class="site-footer"><div class="container"><div class="footer-top"><a class="brand" href="#" aria-label="${escape(salon.name)} home">${wordmark}<span class="brand-tagline">${escape(salon.tagline)}</span></a><p>A little care. A little confidence.<br>A little more you.</p><a class="footer-cta" href="#book">Your moment awaits ${icon("diagonal")}</a></div><div class="footer-bottom"><span>© ${new Date().getFullYear()} ${escape(salon.name)}. ${salon.demoMode ? "A fictional salon concept." : "All rights reserved."}</span><nav aria-label="Footer navigation"><a href="#services">Services</a><a href="#locations">Studios</a><a href="#contact">Contact</a><button class="privacy-trigger" type="button">Privacy</button></nav><span>MADE FOR YOUR KIND OF BEAUTIFUL</span></div></div></footer>
   <dialog id="gallery-dialog" class="gallery-dialog" aria-labelledby="gallery-dialog-title"><button class="dialog-close" aria-label="Close image">${icon("close")}</button><img id="gallery-full-image" alt=""><p id="gallery-dialog-title"></p></dialog>
-  <dialog id="privacy-dialog" class="privacy-dialog" aria-labelledby="privacy-title"><button class="dialog-close" aria-label="Close privacy information">${icon("close")}</button><p class="eyebrow">YOUR INFORMATION</p><h2 id="privacy-title">A little privacy.</h2><p>This demonstration has no appointment backend, analytics, or marketing cookies. Form entries stay in page memory unless you choose &quot;Save to this browser’s demo inbox.&quot; Saved demo requests and admin website edits use this browser’s local storage and persist until removed or browser data is cleared. Anyone using this browser can view them at /admin/. There is no secure login. Use fictional details for testing.</p><p>Choosing WhatsApp opens an external service with your prepared message. WhatsApp’s own privacy terms apply. No message is sent automatically.</p><p>A real salon should replace this notice with its own accurate privacy policy before launch.</p></dialog>
+  <dialog id="privacy-dialog" class="privacy-dialog" aria-labelledby="privacy-title"><button class="dialog-close" aria-label="Close privacy information">${icon("close")}</button><p class="eyebrow">YOUR INFORMATION</p><h2 id="privacy-title">A little privacy.</h2><p>Appointment requests and website conversations are stored in the salon database and are accessible only to authorized salon administrators. A private browser cookie keeps your website conversation accessible in this browser for up to 30 days. Clearing the cookie removes your access, but does not delete the salon record. Contact the salon to request deletion. No marketing tracking is used.</p><p>Choosing WhatsApp opens an external service with your prepared message. WhatsApp’s own privacy terms apply. No message is sent automatically.</p><p>A real salon should replace this notice with its own accurate privacy policy before launch.</p></dialog>
 `;
 
 // Local image fallbacks keep the layout usable without a network or a valid photo.
@@ -277,30 +275,31 @@ form.addEventListener("submit", (event) => {
   form.hidden = true;
   confirmation.hidden = false;
   confirmation.focus();
-  const localSave = document.createElement("button");
-  localSave.type = "button";
-  localSave.className = "button button-local save-local-request";
-  localSave.textContent = "Save to this browser’s demo inbox";
-  const localStatus = document.createElement("p");
-  localStatus.className = "privacy-note";
-  localStatus.setAttribute("role", "status");
-  localStatus.textContent =
-    "Optional: keep this request in the local admin demo. It will not be sent to a salon or shared with another device.";
-  confirmation.querySelector(".edit-request").before(localSave, localStatus);
-  localSave.addEventListener("click", () => {
+  const send = document.createElement("button");
+  send.type = "button";
+  send.className = "button button-local send-appointment-request";
+  send.textContent = "Send appointment request";
+  const status = document.createElement("p");
+  status.className = "privacy-note";
+  status.setAttribute("role", "status");
+  status.textContent =
+    "Send this request to the salon. Your preferred time still needs confirmation.";
+  confirmation.querySelector(".edit-request").before(send, status);
+  send.addEventListener("click", async () => {
+    send.disabled = true;
+    send.textContent = "Sending request...";
     try {
-      const stored = loadRequests();
-      if (stored.error) throw new Error(stored.error);
-      saveRequests([
-        ...stored.requests,
-        makeRequest(values, salon, "Website demo"),
-      ]);
-      localSave.disabled = true;
-      localSave.textContent = "Saved to this browser’s demo inbox";
-      localStatus.textContent =
-        "Saved locally. Open /admin/ in this same browser to review it. No real appointment is booked.";
+      await api("/api/appointments", { method: "POST", body: values });
+      send.textContent = "Request sent to the salon";
+      status.textContent =
+        "Your request is in the salon inbox. Your preferred time is awaiting confirmation; no appointment is confirmed yet.";
+      confirmation.querySelector("strong").textContent =
+        "Request received. Your appointment is not confirmed yet.";
+      confirmation.querySelector(".edit-request").hidden = true;
     } catch (error) {
-      localStatus.textContent = error.message;
+      status.textContent = error.message;
+      send.disabled = false;
+      send.textContent = "Try sending again";
     }
   });
   confirmation.querySelector(".edit-request").addEventListener("click", () => {
@@ -362,26 +361,38 @@ document.querySelectorAll("dialog").forEach((dialog) => {
   });
 });
 
-if (salon.demoMode) {
-  const adminLink = document.createElement("a");
-  adminLink.href = "/admin/";
-  adminLink.textContent = "Studio admin";
-  document.querySelector(".footer-bottom nav").append(adminLink);
-}
-window.addEventListener("storage", (event) => {
+const adminLink = document.createElement("a");
+adminLink.href = "/admin/login";
+adminLink.textContent = "Admin Login";
+document.querySelector(".footer-bottom nav").append(adminLink);
+mountChat(salon);
+
+async function checkSalonUpdates() {
   if (
-    event.key !== CONFIG_KEY ||
+    document.hidden ||
+    !salonRevision ||
     document.querySelector(".content-update-notice")
   )
     return;
-  const notice = document.createElement("div");
-  notice.className = "content-update-notice";
-  notice.setAttribute("role", "status");
-  notice.append("Salon details changed in the local admin. ");
-  const refresh = document.createElement("button");
-  refresh.type = "button";
-  refresh.textContent = "Refresh website";
-  refresh.addEventListener("click", () => location.reload());
-  notice.append(refresh);
-  document.body.append(notice);
+  try {
+    const latest = await api("/api/salon/version");
+    if (latest.revision === salonRevision) return;
+    const notice = document.createElement("div");
+    notice.className = "content-update-notice";
+    notice.setAttribute("role", "status");
+    notice.append("The salon has updated its website details. ");
+    const refresh = document.createElement("button");
+    refresh.type = "button";
+    refresh.textContent = "Refresh website";
+    refresh.addEventListener("click", () => location.reload());
+    notice.append(refresh);
+    document.body.append(notice);
+  } catch {
+    /* Existing page and form stay available when an update check is offline. */
+  }
+}
+const updateTimer = setInterval(checkSalonUpdates, 60000);
+window.addEventListener("focus", checkSalonUpdates);
+window.addEventListener("pagehide", () => clearInterval(updateTimer), {
+  once: true,
 });

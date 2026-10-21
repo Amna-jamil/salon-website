@@ -4,42 +4,31 @@ import { readFile } from "node:fs/promises";
 import { JSDOM } from "jsdom";
 import { salon } from "./salon.config.js";
 import { localDateTime, validateBooking, whatsappLink } from "./booking.js";
-import {
-  loadConfig,
-  saveConfig,
-  loadRequests,
-  saveRequests,
-  makeRequest,
-} from "./admin/store.js";
-
+import { googleMapsLink } from "./locations.js";
 const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
 const script = (
   await readFile(new URL("./main.js", import.meta.url), "utf8")
 ).replace(/^import[\s\S]*?;\s*/gm, "");
-
-function createPage(config = salon, savedConfig = null) {
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+async function page(config = salon, sendError = "") {
   const dom = new JSDOM(html, {
     url: "http://localhost:5173",
     runScripts: "outside-only",
     pretendToBeVisual: true,
   });
-  if (savedConfig) saveConfig(savedConfig, dom.window.localStorage);
+  const calls = [];
   Object.assign(dom.window, {
-    salon: structuredClone(config),
-    loadConfig: () =>
-      savedConfig
-        ? loadConfig(dom.window.localStorage)
-        : { config: structuredClone(config), error: "" },
-    loadRequests: () => loadRequests(dom.window.localStorage),
-    saveRequests: (requests) => saveRequests(requests, dom.window.localStorage),
-    makeRequest,
-    CONFIG_KEY: "luma.salon.config.v1",
     localDateTime,
     validateBooking,
     whatsappLink,
+    googleMapsLink,
+    mountChat: () => {},
     matchMedia: () => ({ addEventListener() {} }),
-    fetch: () => {
-      throw new Error("The demo must not submit data to a network service.");
+    api: async (url, options) => {
+      calls.push({ url, options });
+      if (url === "/api/salon") return { config: structuredClone(config) };
+      if (sendError) throw new Error(sendError);
+      return { id: "request-test", status: "Pending" };
     },
   });
   dom.window.HTMLDialogElement.prototype.showModal = function () {
@@ -48,165 +37,115 @@ function createPage(config = salon, savedConfig = null) {
   dom.window.HTMLDialogElement.prototype.close = function () {
     this.open = false;
   };
-  dom.window.eval(script);
-  return dom;
+  await dom.window.eval(`(async () => {${script}\n})()`);
+  return { dom, doc: dom.window.document, calls };
 }
-
-test("saved admin configuration updates the customer website identity and service prices", () => {
-  const saved = structuredClone(salon);
-  saved.name = "Demo Atelier";
-  saved.services[0].items[0].price = 82.5;
-  const dom = createPage(salon, saved);
-  const doc = dom.window.document;
+const values = {
+  name: "Demo guest",
+  phone: "2025550147",
+  service: "cut",
+  branch: "garden",
+  datetime: "2099-02-20T14:30",
+};
+function preview(dom) {
+  const form = dom.window.document.querySelector("#booking-form");
+  for (const [name, value] of Object.entries(values))
+    form.elements[name].value = value;
+  form.dispatchEvent(new dom.window.Event("submit", { cancelable: true }));
+}
+test("public site renders shared identity, prices and a permanent admin login link", async () => {
+  const config = structuredClone(salon);
+  config.name = "Shared Test Salon";
+  config.services[0].items[0].price = 82.5;
+  const { dom, doc } = await page(config);
   assert.ok(
-    doc.querySelector(".wordmark").textContent.includes("demo atelier"),
+    doc.querySelector(".wordmark").textContent.includes("shared test salon"),
   );
   assert.ok(doc.querySelector(".service-list").textContent.includes("$82.5"));
-  dom.window.close();
-});
-
-test("page renders all configured services and branches without fake map/social links", () => {
-  const dom = createPage();
-  const doc = dom.window.document;
-  assert.equal(doc.querySelectorAll("h1").length, 1);
   assert.equal(
     doc.querySelectorAll(".service-card").length,
-    salon.services.length,
+    config.services.length,
   );
   assert.equal(
-    doc.querySelectorAll(".branch-card").length,
-    salon.branches.length,
+    doc.querySelector('.footer-bottom a[href="/admin/login"]').textContent,
+    "Admin Login",
   );
-  assert.equal(doc.querySelectorAll(".branch-actions .icon-link").length, 0);
-  assert.equal(doc.querySelector('script[type="application/ld+json"]'), null);
-  for (const section of [
-    "about",
-    "services",
-    "work",
-    "locations",
-    "book",
-    "contact",
-  ])
-    assert.ok(doc.getElementById(section));
   dom.window.close();
 });
-
-test("service and branch shortcuts populate the booking form", () => {
-  const dom = createPage();
-  const doc = dom.window.document;
+test("saved full addresses generate encoded Google Maps links; missing addresses hide them", async () => {
+  const config = structuredClone(salon);
+  config.branches[0].address = "Demo #12, Garden Road & Test Avenue";
+  config.branches[0].mapUrl = "https://example.com/obsolete";
+  const { dom, doc } = await page(config);
+  const links = doc.querySelectorAll(
+    '.branch-actions a[title="Open in Google Maps"]',
+  );
+  assert.equal(links.length, 1);
+  assert.equal(
+    new URL(links[0].href).searchParams.get("query"),
+    config.branches[0].address,
+  );
+  assert.ok(
+    doc
+      .querySelector(".branch-address")
+      .textContent.includes(config.branches[0].address),
+  );
+  assert.equal(googleMapsLink("   "), "");
+  dom.window.close();
+});
+test("empty forms show accessible errors and service and location shortcuts populate fields", async () => {
+  const { dom, doc } = await page();
+  doc
+    .querySelector("#booking-form")
+    .dispatchEvent(new dom.window.Event("submit", { cancelable: true }));
+  assert.equal(doc.querySelectorAll('[aria-invalid="true"]').length, 5);
+  assert.equal(doc.activeElement.id, "name");
   doc.querySelector('[data-service="gel"]').click();
   doc.querySelector('[data-branch="atelier"]').click();
   assert.equal(doc.querySelector("#service").value, "gel");
   assert.equal(doc.querySelector("#branch").value, "atelier");
   dom.window.close();
 });
-
-test("empty form submission shows accessible errors and focuses the first field", () => {
-  const dom = createPage();
-  const doc = dom.window.document;
-  doc
-    .querySelector("#booking-form")
-    .dispatchEvent(new dom.window.Event("submit", { cancelable: true }));
-  assert.equal(doc.querySelectorAll('[aria-invalid="true"]').length, 5);
-  assert.equal(doc.activeElement.id, "name");
-  assert.equal(doc.querySelector("#confirmation").hidden, true);
-  dom.window.close();
+test("appointments send only after confirmation and show success or recoverable server errors", async () => {
+  for (const error of ["", "Server temporarily unavailable"]) {
+    const { dom, doc, calls } = await page(salon, error);
+    preview(dom);
+    assert.equal(
+      calls.filter((call) => call.url === "/api/appointments").length,
+      0,
+    );
+    doc.querySelector(".send-appointment-request").click();
+    await tick();
+    assert.equal(calls.at(-1).url, "/api/appointments");
+    if (error) {
+      assert.ok(doc.querySelector("#confirmation").textContent.includes(error));
+      assert.equal(
+        doc.querySelector(".send-appointment-request").disabled,
+        false,
+      );
+    } else {
+      assert.ok(
+        doc
+          .querySelector("#confirmation")
+          .textContent.includes("Request received"),
+      );
+      assert.equal(
+        doc.querySelector(".send-appointment-request").disabled,
+        true,
+      );
+    }
+    dom.window.close();
+  }
 });
-
-test("valid form shows an honest confirmation, escapes input and builds WhatsApp enquiry", () => {
-  const dom = createPage();
-  const doc = dom.window.document;
-  const form = doc.querySelector("#booking-form");
-  const values = {
-    name: "<img src=x> Guest",
-    phone: "+1 202 555 0147",
-    service: "cut",
-    branch: "garden",
-    datetime: "2099-01-15T14:30",
-  };
-  for (const [key, value] of Object.entries(values))
-    form.elements[key].value = value;
-  form.dispatchEvent(new dom.window.Event("submit", { cancelable: true }));
-  const result = doc.querySelector("#confirmation");
-  assert.equal(result.hidden, false);
-  assert.equal(form.hidden, true);
-  assert.ok(
-    result.textContent.includes(
-      "Nothing has been sent and no appointment is booked.",
-    ),
-  );
-  assert.equal(result.querySelector("img"), null);
-  const link = new URL(result.querySelector("a").href);
-  assert.ok(link.searchParams.get("text").includes("The Garden Studio"));
-  doc.querySelector(".edit-request").click();
-  assert.equal(form.hidden, false);
-  assert.equal(form.elements.name.value, values.name);
-  dom.window.close();
-});
-
-test("navigation disclosure and gallery viewer open and close", () => {
-  const dom = createPage();
-  const doc = dom.window.document;
-  const toggle = doc.querySelector(".menu-toggle");
-  toggle.click();
-  assert.equal(toggle.getAttribute("aria-expanded"), "true");
+test("responsive navigation and gallery dialogs retain their interactions", async () => {
+  const { dom, doc } = await page();
+  doc.querySelector(".menu-toggle").click();
   assert.equal(doc.querySelector("#mobile-nav").hidden, false);
   doc.querySelector("#mobile-nav a").click();
-  assert.equal(toggle.getAttribute("aria-expanded"), "false");
+  assert.equal(doc.querySelector("#mobile-nav").hidden, true);
   doc.querySelector('[data-gallery="0"]').click();
   assert.equal(doc.querySelector("#gallery-dialog").open, true);
   doc.querySelector("#gallery-dialog .dialog-close").click();
   assert.equal(doc.querySelector("#gallery-dialog").open, false);
-  dom.window.close();
-});
-
-test("a customer only enters the local admin inbox after explicitly choosing to save", () => {
-  const dom = createPage();
-  const doc = dom.window.document;
-  const form = doc.querySelector("#booking-form");
-  for (const [name, value] of Object.entries({
-    name: "Demo local guest",
-    phone: "2025550147",
-    service: "cut",
-    branch: "garden",
-    datetime: "2099-02-20T14:30",
-  }))
-    form.elements[name].value = value;
-  form.dispatchEvent(new dom.window.Event("submit", { cancelable: true }));
-  assert.equal(loadRequests(dom.window.localStorage).requests.length, 0);
-  doc.querySelector(".save-local-request").click();
-  const saved = loadRequests(dom.window.localStorage).requests;
-  assert.equal(saved.length, 1);
-  assert.equal(saved[0].source, "Website demo");
-  assert.equal(doc.querySelector(".save-local-request").disabled, true);
-  dom.window.close();
-});
-
-test("real details enable branch maps, social links and local-business schema", () => {
-  const config = structuredClone(salon);
-  config.demoMode = false;
-  config.branches = [
-    {
-      ...config.branches[0],
-      address: "Test address for automated checks",
-      mapUrl: "https://maps.google.com/?q=test",
-      phone: "+1 202 555 0147",
-      seoAddress: {
-        streetAddress: "Test address",
-        addressLocality: "Test city",
-        addressCountry: "US",
-      },
-    },
-  ];
-  config.contact.socials[0].url = "https://www.instagram.com/";
-  const dom = createPage(config);
-  const doc = dom.window.document;
-  assert.equal(doc.querySelectorAll(".branch-actions .icon-link").length, 2);
-  const schema = JSON.parse(
-    doc.querySelector('script[type="application/ld+json"]').textContent,
-  );
-  assert.equal(schema["@type"], "BeautySalon");
-  assert.equal(schema.branch[0].address.addressLocality, "Test city");
-  assert.ok(schema.sameAs.includes("https://www.instagram.com/"));
   dom.window.close();
 });

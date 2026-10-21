@@ -6,7 +6,7 @@ export default [
   js.configs.recommended,
   { files: ["src/**/*.js"], languageOptions: { globals: globals.browser } },
   {
-    files: ["**/*.test.js", "*.config.js"],
+    files: ["**/*.test.js", "*.config.js", "server/**/*.js"],
     languageOptions: { globals: globals.node },
   },
 ];

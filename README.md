@@ -1,133 +1,118 @@
-# Luma salon website
+# Luma salon application
 
-An original, responsive fictional salon template. Vite + vanilla JavaScript + CSS; no runtime framework, database, accounts, or backend. Designed for easy adaptation to a real salon.
+One repository, one Node application, one origin and one deployment. The existing public website and admin design are retained. Vite builds the shared frontend; Express serves it alongside authenticated APIs. SQLite stores salon settings, appointments, admin accounts, sessions and website conversations on persistent disk.
+
+The old version had no backend, admin account or database. Its browser-local storage has been replaced with server-backed persistence. No public admin sign-up or default password has been added.
 
 ## Run locally
 
-Requires Node.js 22.12+ (Node 24 recommended).
+Requires **Node.js 24 or newer**.
 
 ```sh
 npm install
+npm run admin:create -- owner@example.com
 npm run dev
 ```
 
-Open the Local URL printed by Vite, normally `http://127.0.0.1:5173`.
+Choose your own email in the provisioning command. It prompts for a password of 12–256 characters, hides typed characters, and stores only a salted scrypt hash. Do not enter a password in command-line arguments or commit it. No real admin account is created automatically. Run provisioning against the same `DATABASE_PATH` used by the application.
+
+Default URL: `http://127.0.0.1:5173`. Copy `.env.example` to `.env` if you need different server settings. Both the server and private admin commands load `.env`; it is ignored by Git.
+
+| Route                   | Purpose                                                                          |
+| ----------------------- | -------------------------------------------------------------------------------- |
+| `/`                     | Public salon website and customer chat                                           |
+| `/admin/login`          | Admin login, with a link back to the salon                                       |
+| `/admin/`               | Protected dashboard                                                              |
+| `/admin/#appointments`  | Appointment inbox                                                                |
+| `/admin/#conversations` | Website conversations and replies                                                |
+| `/admin/#services`      | Services, categories and prices                                                  |
+| `/admin/#gallery`       | Photos, captions and accessible descriptions                                     |
+| `/admin/#locations`     | Branch names, full addresses, phones and hours                                   |
+| `/admin/#settings`      | Shared identity, contact details, WhatsApp, homepage, colors, SEO and data tools |
+
+A discreet **Admin Login** link is always present in the public footer. Unauthenticated admin-page requests redirect to login. Admin APIs also verify the current account’s admin role; typing a URL or changing frontend state does not bypass access checks. Ordinary customer accounts cannot use admin pages or APIs. The dashboard includes **Sign out** and **View customer website**.
+
+Reset an existing administrator’s password privately:
+
+```sh
+npm run admin:password -- owner@example.com
+```
+
+Resetting the password revokes that account’s existing sessions. There are no public registration, role-change or password-reset endpoints.
+
+## Shared website data
+
+The first database initialization seeds fictional demo settings from `src/salon.config.js`. Thereafter, **saved database settings are the source of truth**. Changing the seed file does not silently overwrite existing business data.
+
+Use the admin editors to change salon identity, text, services, prices, photos, phone/email/social links, WhatsApp number, timezone/currency and branch information. Saved changes are read by the public website on its next load. Existing public tabs check for changes on focus and every minute and offer a refresh without wiping a visitor’s form. Public page title, description and sharing metadata are generated from the saved settings by the server.
+
+Loading failures show a retry state. Saving failures keep the draft and show an error. Revision checks reject conflicting edits rather than overwriting another admin’s settings or newly received requests; reload before retrying a conflicting edit.
+
+Gallery images can use `/images/filename.jpg`, an HTTP(S) image URL, or a JPG/PNG/WebP uploaded through the editor (up to 500 KB each). Uploaded images are embedded in the persisted settings, not browser storage. Whole settings requests are limited to 6 MB. For larger portfolios, use hosted image URLs or add files to `public/images/`. Update alt text and use photos you have permission to publish. Demo image sources are in `IMAGE_CREDITS.md`; local font licensing is in `public/fonts/OFL.txt`.
+
+Website settings → Data & setup retains validated configuration/appointment JSON import/export and explicit default-restoration tools. Existing JSON backups from the browser-local version can be imported after login. Old localStorage records are not silently uploaded or used as live website data. The only remaining localStorage value is the optional admin light/dark preference.
+
+Demo reviews remain explicitly labeled. Replace fictional content, prices, contact details and photographs before launch. The first-run WhatsApp number is a reserved fictional number and must be replaced under **Website settings → Salon & contact**. Set the real business website, and use a configuration import with `demoMode: false` when the fictional content has been replaced. Demo mode keeps public search indexing disabled; admin and login pages are always excluded from indexing.
+
+## Branch addresses and Google Maps
+
+Open **Locations → Edit location** and enter the **Full branch address**. The saved address appears on the public branch card. Its **Open in Google Maps** link is generated from:
+
+```text
+https://www.google.com/maps/search/?api=1&query=<encoded saved address>
+```
+
+No Maps API key or separate map URL is required. Blank addresses hide the map link. Multiple branches remain supported, with their own phone numbers and opening hours. Keep at least one branch and one service per category.
+
+## Appointments
+
+Visitors choose a service, branch and preferred future date/time, preview their details, then explicitly **Send appointment request**. Requests are saved in SQLite and appear in the authorized admin inbox on any device. Sending a request does not guarantee availability or create an automatically confirmed appointment. Admins can add requests, search/filter, edit preferred time, record internal notes and change status. These status changes do not send notifications.
+
+Hours are display information; staff capacity, holidays, calendar integrations, automatic reminders and payment processing are not implemented. The inbox accepts up to 2,000 records; archive/export and remove old records as appropriate.
+
+## Website chat and WhatsApp
+
+Visitors start a chat with their name, optional phone and message. Messages and conversations are stored in SQLite. A random, HttpOnly, SameSite cookie authorizes access to that visitor’s conversation for up to 30 days. The token is stored hashed in the database. Other visitors cannot read or reply to it, even if they know a conversation ID. Clearing cookies loses browser access to the conversation, but does not erase the salon’s record. Admins see conversations only after authorized login.
+
+Admins read and reply under **Customer conversations**. Portal replies appear back in the website widget. Both views poll while open every six seconds; they are website messages, not WhatsApp messages. Sending and loading have visible feedback, retry states and preserved drafts. A phone number alone does not give a visitor access to an existing conversation.
+
+**Continue on WhatsApp** opens `wa.me` using the salon’s saved WhatsApp number and a prefilled message containing the customer’s name, conversation ID and recent context. The visitor still sends it in WhatsApp. The UI explicitly states that WhatsApp is separate and its replies do not appear in portal chat.
+
+There is **no configured WhatsApp Business API account, access token, phone-number ID or webhook integration** in this project. Full syncing would need an official Meta Business/WhatsApp Business setup, registered phone-number ID, appropriate access token, webhook verification secret, app signing secret and public HTTPS webhook subscription, followed by a verified message-delivery integration. Adding credentials alone will not enable syncing; the current application intentionally supports only the handoff. Consult [Meta’s official Cloud API setup](https://developers.facebook.com/docs/whatsapp/cloud-api/get-started).
+
+## One production deployment
+
+```sh
+npm ci
+npm run build
+npm run admin:create -- owner@example.com
+npm start
+```
+
+Configure **`APP_ORIGIN=https://your-real-domain.example`**, without a trailing slash, before `npm start`. Production requires HTTPS at the public ingress, uses Secure cookies, and serves the built website, login, dashboard and all APIs from the same Node process. Set `HOST=0.0.0.0` when the host requires it, and set `PORT` to the host’s assigned port. `TRUST_PROXY=1` is available only for a topology with exactly one trusted reverse proxy; leave it unset otherwise.
+
+**Keep `DATABASE_PATH` on persistent, private storage**, for example `/app/data/salon.sqlite`. Do not deploy this as a static-only `dist/` upload, an ephemeral serverless filesystem or multiple instances with separate local disks. Database files must not be served as web assets. Back up the database using a SQLite-consistent snapshot; do not copy only the `.sqlite` file while ignoring active WAL contents. The supported deployment is one Node service with one mounted database volume. No external database, second app, repository or separate frontend deployment is required.
+
+The included `Dockerfile` builds that single service:
+
+```sh
+docker build -t salon-website .
+docker run -d --name salon -p 3000:3000 -e APP_ORIGIN=https://your-domain.example -v salon-data:/app/data salon-website
+docker exec -it salon npm run admin:create -- owner@example.com
+```
+
+Place it behind your host’s HTTPS ingress. Docker uses an unprivileged application user. Application and private provisioning commands must point at the same mounted volume. Deploying the code does not itself create an administrator or configure a domain. No live production hosting target was configured in the repository, so remote publication is not performed automatically.
+
+For a local built-app check without HTTPS, run `npm run build` followed by `npm run preview`; this uses the same backend and database with local development cookies. Use `npm start` for production.
+
+## Security and verification
+
+Admin sessions use random tokens stored hashed in SQLite, HttpOnly/SameSite cookies, eight-hour expiry, session rotation on login and role checks on every admin API request. Mutations validate the request origin; admin mutations additionally require the session’s CSRF token. Login and public message/request submissions are rate-limited. Inputs are validated, SQL uses bound parameters, and chat content is rendered as text. Password changes revoke sessions. Credentials and database files are ignored by Git; the Vite development server denies backend source, database files and environment files.
 
 ```sh
 npm run lint
 npm test
 npm run build
-npm run preview
 ```
 
-`npm run build` generates the production website in `dist/`. Deploy that directory to a static web host. There are no API keys or environment variables to configure.
-
-## Customize one file
-
-**Edit `src/salon.config.js` for all business information, or use the new browser-local admin at `/admin/` to edit and export it.** Browser-saved overrides take precedence over the source file until you restore defaults in the admin.
-
-| What to change                                           | Configuration field                                                                                                      |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Salon name and wordmark                                  | `name`, `tagline`                                                                                                        |
-| Logo and favicon                                         | `logo`, `favicon` (public asset paths)                                                                                   |
-| Brand colors                                             | `theme`                                                                                                                  |
-| Hero copy and photos                                     | `hero`                                                                                                                   |
-| About text, values and photo                             | `about`                                                                                                                  |
-| Service categories, names, starting prices and durations | `services[].items[]`                                                                                                     |
-| Currency and formatting                                  | `currency`, `currencyLabel`, `locale`                                                                                    |
-| Gallery photos, labels and accessible descriptions       | `gallery[]`                                                                                                              |
-| Clearly marked demo testimonial text                     | `reviews[]`                                                                                                              |
-| Add/remove locations                                     | `branches[]` (each needs a unique `id`)                                                                                  |
-| Branch address, map URL and phone                        | `branches[].address`, `.mapUrl`, `.phone`                                                                                |
-| Branch opening hours                                     | `branches[].hours`                                                                                                       |
-| Main phone and email                                     | `contact.phone`, `contact.email`                                                                                         |
-| **WhatsApp number**                                      | **`contact.whatsappNumber` — international digits only, e.g. country code + number, without `+`, spaces or punctuation** |
-| Instagram / Facebook / other profiles                    | `contact.socials[]` with `label` and a complete `url`                                                                    |
-| Main opening hours                                       | `contact.hours`                                                                                                          |
-| Salon timezone                                           | `timeZone` (IANA name such as `Asia/Karachi`)                                                                            |
-| Booking introduction and WhatsApp greeting               | `booking`                                                                                                                |
-| Page title and description                               | `seo`                                                                                                                    |
-| Production website address                               | `website`                                                                                                                |
-| Demo notices and search indexing                         | `demoMode`                                                                                                               |
-
-### Photos
-
-Photos are bundled locally in `public/images/`. Add your own files there and update the paths in the configuration (e.g. `/images/my-salon.jpg`). Update the accompanying alt text as well. There is a graceful visual fallback for missing images. Use images you have permission to publish, especially real portfolio and customer photos. See `IMAGE_CREDITS.md` for the demo stock sources. Fonts are self-hosted in `public/fonts/`; the included DM Sans license is in that folder.
-
-### Branches, maps and hours
-
-The default studios are fictional concepts with no street addresses. Map links appear only when `mapUrl` is provided; branch call links appear only with a branch `phone`. Unconfigured social profiles and email links are omitted. One or more locations are supported by editing the array. Service IDs, service-item IDs, and branch IDs must remain unique.
-
-Opening hours are editable display text. The appointment form accepts a preferred time, including times outside opening hours; it **does not check live availability, holidays, capacity, or staff schedules**. A real salon confirms the requested time separately.
-
-## Booking behavior
-
-- Required name, phone, service, branch and future date/time are validated.
-- Preferred times are interpreted in the configured salon timezone, shown beside the field and in the summary.
-- Form submission displays a clear request preview. **Nothing is sent or booked.** Storage is optional and explicit.
-- The optional WhatsApp button opens a correctly encoded message containing the entered details and configured number. The visitor still has to send it in WhatsApp.
-- The default phone/WhatsApp number is a reserved fictional demo number. Replace it before use.
-- Form entries stay in page memory unless the visitor explicitly chooses **Save to this browser’s demo inbox** after the preview. This optional action saves the request in local storage, visible at `/admin/` in the same browser and origin. No data is transmitted to a salon or another device. There is no analytics, tracking, or appointment endpoint.
-
-## Admin workspace
-
-Run `npm run dev`, then open **`http://127.0.0.1:5173/admin/`** (use Vite’s actual port if different). The customer website remains at `/`. A "Studio admin" link also appears in the demo website footer.
-
-The admin includes:
-
-- **Overview:** request counts, selectable monthly diary, launch checklist and shortcuts. The inbox starts empty; **Load sample requests** adds five clearly labeled fictional records.
-- **Appointments:** create manual demo requests; search by guest, phone, service or studio; filter status/location; view details; change preferred time, status and internal notes; remove requests; export/restore JSON backups. Local status changes never notify guests.
-- **Services & pricing:** add/edit categories and services, change starting prices and durations, move services between categories, and remove items. At least one category, one service per category and one location must remain.
-- **Gallery:** add/edit/remove images and accessible captions. Use local asset paths or HTTP(S) URLs, or choose a JPG/PNG/WebP under 500 KB. Selected files are stored as local image data, not uploaded to a server.
-- **Locations:** add/edit/remove studios, contact/map links and per-location opening hours.
-- **Demo reviews:** manage illustrative testimonial copy; demo labels remain on the customer website.
-- **Website settings:** salon identity, contact/WhatsApp, social links, timezone/currency, homepage text/photos, palette, SEO; configuration import/export; sample cleanup and default-settings restoration.
-- **Light/dark mode** and responsive sidebar navigation.
-
-Changes persist in this browser’s local storage. Refresh the customer website to preview saved edits. Open customer tabs show a refresh notice when another tab changes configuration. The admin blocks stale saves after another tab changes data; reload before editing further. Clearing browser data, using a different browser/device, changing port/hostname, or private browsing creates a different or empty workspace.
-
-To make edits permanent in the codebase: open **Website settings > Data & setup > Export configuration .js**, replace `src/salon.config.js` with the downloaded file, and run `npm run build`. JSON export/import is also available for local settings backups. Browser-only changes do not update the source file, deployed files, or build-time SEO metadata. Uploaded gallery photos are included in exported configuration as embedded image data; for a real deployment, moving photos to hosted storage or `public/images/` is preferable.
-
-**This admin has no secure login or authorization.** It is a functional local prototype, not a production management system. Anyone with access to this browser can open it and view saved requests. Use fictional guest data. There is no server, cross-device inbox, delivery of messages, calendar availability checking or authentication. A backend with authenticated admin access and authorization is needed before a real business uses customer information.
-
-Local storage keys: `luma.salon.config.v1`, `luma.salon.requests.v1`, `luma.admin.theme`. Requests are limited to 2,000 per local inbox; export backups regularly. Website imports are validated before replacement; save failures leave previous stored data intact. Damaged inbox data is not overwritten by normal edits; restore a valid request backup under Data & setup to recover.
-
-## Before using for a real salon
-
-Replace fictional details, stock portfolio images, prices, phone/WhatsApp number, timezone, addresses, hours and social URLs. Add a real privacy policy appropriate to the final service. Reviews remain explicitly labeled demo content; replace the section with verified customer testimonials and update its demo labels only when you have real permissioned reviews.
-
-Set `website` and `seo`, then set `demoMode: false` once the business details are real. The demo is intentionally `noindex`; production mode removes that directive at build time and enables `BeautySalon` JSON-LD. Supply each real location’s `seoAddress`, e.g.:
-
-```js
-seoAddress: {
-  streetAddress: 'Your verified street address',
-  addressLocality: 'Your city',
-  addressRegion: 'Your region',
-  postalCode: 'Your postal code',
-  addressCountry: 'Your two-letter country code',
-}
-```
-
-There are no fabricated ratings, awards or business performance claims. A booking backend, email delivery, payment processing, staff calendars and availability checking would be separate integrations. Without a backend, the website remains an honest enquiry preview with a manual WhatsApp handoff.
-
-## Project structure
-
-```text
-admin/index.html     Separate admin entry point (/admin/)
-src/admin/admin.js   Admin screens, editors and interactions
-src/admin/admin.css  Admin design tokens and responsive styling
-src/admin/store.js   Validated local settings and request persistence
-src/admin/*.test.js  Admin interaction and persistence checks
-src/salon.config.js   Default salon configuration and export target
-src/main.js           Page sections and interactions
-src/style.css         Responsive design, layout and focus states
-src/fonts.css         Local font definitions
-src/booking.js        Booking validation, timezone and WhatsApp helpers
-src/*.test.js         Validation and DOM interaction tests
-public/images/        Local demo photography
-public/fonts/         Local fonts and license
-public/favicon.svg    Default demo favicon
-vite.config.js        Build-time metadata from salon configuration
-```
-
-Keyboard navigation, visible focus states, form labels and error descriptions, native dialog focus handling, reduced-motion support and responsive layouts are included. DOM tests do not replace a visual check in a real browser; inspect desktop and mobile widths before client handoff.
+Tests cover real HTTP authorization, ordinary-account denial, session expiry, CSRF/origin checks, persistent database writes, public/admin data sharing, concurrent-edit rejection, appointments, private portal chat and replies, rendered DOM interactions, WhatsApp context and address-derived map links. Browser visual checks still require a real browser; DOM tests do not verify visual layout. Privacy text describes actual storage and channels; replace it with the salon’s final privacy policy and retention process before handling real customer data.

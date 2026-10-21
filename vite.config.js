@@ -12,11 +12,27 @@ const attribute = (value) =>
   );
 
 export default defineConfig({
+  server: {
+    fs: {
+      deny: [
+        ".env",
+        ".env.*",
+        "*.{crt,pem}",
+        "**/.git/**",
+        "**/data/**",
+        "**/server/**",
+        "**/*.{sqlite,sqlite-wal,sqlite-shm,db,db-wal,db-shm}",
+      ],
+    },
+  },
   build: {
     rollupOptions: {
       input: {
         website: fileURLToPath(new URL("./index.html", import.meta.url)),
         admin: fileURLToPath(new URL("./admin/index.html", import.meta.url)),
+        login: fileURLToPath(
+          new URL("./admin/login/index.html", import.meta.url),
+        ),
       },
     },
   },
@@ -24,9 +40,7 @@ export default defineConfig({
     {
       name: "salon-metadata",
       transformIndexHtml(html, context) {
-        if (
-          context.filename.replaceAll("\\", "/").endsWith("/admin/index.html")
-        )
+        if (context.filename.replaceAll("\\", "/").includes("/admin/"))
           return html;
         return html
           .replace(
