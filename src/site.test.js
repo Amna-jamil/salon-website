@@ -5,6 +5,8 @@ import { JSDOM } from "jsdom";
 import { salon } from "./salon.config.js";
 import { localDateTime, validateBooking, whatsappLink } from "./booking.js";
 import { googleMapsLink } from "./locations.js";
+import { activeOffers, bookingBill } from "./pricing.js";
+import { mountPublicOffers } from "./offers.js";
 const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
 const script = (
   await readFile(new URL("./main.js", import.meta.url), "utf8")
@@ -22,6 +24,9 @@ async function page(config = salon, sendError = "") {
     validateBooking,
     whatsappLink,
     googleMapsLink,
+    activeOffers,
+    bookingBill,
+    mountPublicOffers,
     mountChat: () => {},
     matchMedia: () => ({ addEventListener() {} }),
     api: async (url, options) => {
@@ -72,6 +77,43 @@ test("public site renders shared identity, prices and a permanent admin login li
   );
   dom.window.close();
 });
+
+test("only active offers show publicly and an eligible selected offer reaches the appointment preview", async () => {
+  const offer = {
+    id: "public-offer",
+    title: "Demo 20% care",
+    description: "Illustrative promotion",
+    enabled: true,
+    type: "Percent",
+    value: 20,
+    currency: "USD",
+    serviceIds: ["cut"],
+    branchIds: ["garden"],
+    startDate: "",
+    endDate: "",
+  };
+  const config = {
+    ...structuredClone(salon),
+    offers: [
+      offer,
+      { ...offer, id: "paused", enabled: false, title: "Paused offer" },
+    ],
+  };
+  const { dom, doc, calls } = await page(config);
+  try {
+    assert.equal(doc.querySelector("#offers").hidden, false);
+    assert.equal(doc.querySelectorAll(".public-offer-card").length, 1);
+    doc.querySelector(".public-offer-card a").click();
+    assert.equal(doc.querySelector("#offerId").value, offer.id);
+    preview(dom);
+    assert.match(doc.querySelector("#confirmation").textContent, /44/);
+    doc.querySelector(".send-appointment-request").click();
+    await tick();
+    assert.equal(calls.at(-1).options.body.offerId, offer.id);
+  } finally {
+    dom.window.close();
+  }
+});
 test("saved full addresses generate encoded Google Maps links; missing addresses hide them", async () => {
   const config = structuredClone(salon);
   config.branches[0].address = "Demo #12, Garden Road & Test Avenue";
@@ -81,6 +123,14 @@ test("saved full addresses generate encoded Google Maps links; missing addresses
     '.branch-actions a[title="Open in Google Maps"]',
   );
   assert.equal(links.length, 1);
+  assert.equal(links[0].textContent.trim(), "Open in Google Maps");
+  assert.ok(
+    doc.querySelector("#locations-title").textContent.includes("locations"),
+  );
+  assert.equal(
+    doc.querySelector('.desktop-nav a[href="#locations"]').textContent,
+    "Locations",
+  );
   assert.equal(
     new URL(links[0].href).searchParams.get("query"),
     config.branches[0].address,

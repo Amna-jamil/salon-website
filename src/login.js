@@ -17,11 +17,13 @@ form.addEventListener("submit", async (event) => {
   button.textContent = "Signing in…";
   error.textContent = "";
   try {
-    await api("/api/auth/login", {
+    const result = await api("/api/auth/login", {
       method: "POST",
       body: Object.fromEntries(new FormData(form)),
     });
-    location.assign("/admin/");
+    location.assign(
+      result.user.role === "superadmin" ? "/admin/#settings" : "/admin/",
+    );
   } catch (failure) {
     error.textContent = failure.message;
     button.disabled = false;

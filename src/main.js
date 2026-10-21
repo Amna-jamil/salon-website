@@ -3,9 +3,15 @@ import "./style.css";
 import { api } from "./api.js";
 import { googleMapsLink } from "./locations.js";
 import { mountChat } from "./chat.js";
+import { activeOffers, bookingBill } from "./pricing.js";
+import { mountPublicOffers } from "./offers.js";
 import { localDateTime, validateBooking, whatsappLink } from "./booking.js";
 
 const { config: salon, revision: salonRevision } = await api("/api/salon");
+const displayBranches = [...salon.branches].sort(
+  (a, b) =>
+    Number(Boolean(b.address.trim())) - Number(Boolean(a.address.trim())),
+);
 
 const escape = (value) =>
   String(value).replace(
@@ -52,7 +58,7 @@ const navLinks = [
   ["About", "about"],
   ["Services", "services"],
   ["Our work", "work"],
-  ["Studios", "locations"],
+  ["Locations", "locations"],
   ["Contact", "contact"],
 ];
 const waLink = whatsappLink(salon);
@@ -153,6 +159,8 @@ document.querySelector("#app").innerHTML = `
       <div class="about-copy"><p class="eyebrow">${escape(salon.about.eyebrow)}</p><h2 id="about-title">${escape(salon.about.title).replace("\n", "<br>")}</h2><p>${escape(salon.about.description)}</p><p>${escape(salon.about.detail)}</p><ul class="values">${salon.about.values.map((value) => `<li>${icon("spark")}${escape(value)}</li>`).join("")}</ul><a class="text-link light-link" href="#book">Find your moment ${icon("arrow")}</a></div>
     </div></section>
 
+    <section class="section" id="offers" aria-label="Current salon offers" hidden></section>
+    <section class="section" id="offers" aria-label="Current salon offers" hidden></section>
     <section class="section work-section" id="work" aria-labelledby="work-title"><div class="container">
       <div class="section-heading"><div><p class="eyebrow">THE INSPIRATION EDIT</p><h2 id="work-title">A little look at <em>the glow.</em></h2></div><p>${salon.demoMode ? "Stock photography for this demo.<br>A space for your salon’s own beautiful work." : "A few favorite details.<br>Find inspiration for your next visit."}</p></div>
       <div class="gallery">${salon.gallery.map((item, i) => `<button class="gallery-item gallery-item-${i}" data-gallery="${i}" aria-label="View ${escape(item.label)}">${photo(item.image, item.alt)}<span class="gallery-caption"><span><small>${escape(item.category)}</small>${escape(item.label)}</span><span class="round-arrow">${icon("plus")}</span></span></button>`).join("")}</div>
@@ -165,8 +173,8 @@ document.querySelector("#app").innerHTML = `
     </div></section>
 
     <section class="section locations-section" id="locations" aria-labelledby="locations-title"><div class="container">
-      <div class="section-heading"><div><p class="eyebrow">FIND YOUR LITTLE ESCAPE</p><h2 id="locations-title">A space to <em>settle in.</em></h2></div><p>${salon.demoMode ? "Two imagined studios. One lovely feeling.<br>Real locations can be added before launch." : "Choose your studio.<br>We’ll make you feel at home."}</p></div>
-      <div class="branch-grid">${salon.branches.map((branch) => `<article class="branch-card">${photo(branch.image, branch.imageAlt)}<div class="branch-content"><p class="eyebrow">${escape(branch.label)}</p><h3>${escape(branch.name)}</h3><p>${escape(branch.description)}</p>${branch.address ? `<p class="branch-address">${icon("pin")}${escape(branch.address)}</p>` : '<p class="unconfigured">Demo studio · Address to be added</p>'}<details><summary>Studio opening hours ${icon("plus")}</summary>${hours(branch.hours || salon.contact.hours)}</details><div class="branch-actions"><a class="text-link" href="#book" data-branch="${escape(branch.id)}">Choose this studio ${icon("arrow")}</a>${googleMapsLink(branch.address) ? `<a class="icon-link" href="${escape(googleMapsLink(branch.address))}" target="_blank" rel="noopener noreferrer" aria-label="Open in Google Maps: ${escape(branch.name)} (opens new tab)" title="Open in Google Maps">${icon("pin")}</a>` : ""}${branch.phone ? `<a class="icon-link" href="${phoneHref(branch.phone)}" aria-label="Call ${escape(branch.name)}">${icon("phone")}</a>` : ""}</div></div></article>`).join("")}</div>
+      <div class="section-heading"><div><p class="eyebrow">FIND YOUR LITTLE ESCAPE</p><h2 id="locations-title">Our <em>locations.</em></h2></div><p>Find the studio that feels closest to you.<br>View its address, opening hours and directions.</p></div>
+      <div class="branch-grid">${displayBranches.map((branch) => `<article class="branch-card">${photo(branch.image, branch.imageAlt)}<div class="branch-content"><p class="eyebrow">${escape(branch.label)}</p><h3>${escape(branch.name)}</h3><p>${escape(branch.description)}</p>${branch.address ? `<p class="branch-address">${icon("pin")}${escape(branch.address)}</p>` : '<p class="unconfigured">Demo studio · Address to be added</p>'}<details><summary>Studio opening hours ${icon("plus")}</summary>${hours(branch.hours || salon.contact.hours)}</details><div class="branch-actions"><a class="text-link" href="#book" data-branch="${escape(branch.id)}">Choose this studio ${icon("arrow")}</a>${googleMapsLink(branch.address) ? `<a class="branch-map-link" href="${escape(googleMapsLink(branch.address))}" target="_blank" rel="noopener noreferrer" aria-label="Open in Google Maps: ${escape(branch.name)} (opens new tab)" title="Open in Google Maps">${icon("pin")}<span>Open in Google Maps</span>${icon("diagonal")}</a>` : ""}${branch.phone ? `<a class="icon-link" href="${phoneHref(branch.phone)}" aria-label="Call ${escape(branch.name)}">${icon("phone")}</a>` : ""}</div></div></article>`).join("")}</div>
     </div></section>
 
     <section class="booking-section section" id="book" aria-labelledby="booking-title"><div class="container booking-grid">
@@ -176,6 +184,16 @@ document.querySelector("#app").innerHTML = `
           <div class="form-row"><div class="field"><label for="name">Your name <span aria-hidden="true">*</span></label><input id="name" name="name" autocomplete="name" placeholder="Full name" required maxlength="100" aria-describedby="name-error"><span class="field-error" id="name-error"></span></div><div class="field"><label for="phone">Phone number <span aria-hidden="true">*</span></label><input id="phone" name="phone" type="tel" autocomplete="tel" placeholder="Your phone number" required maxlength="30" aria-describedby="phone-error"><span class="field-error" id="phone-error"></span></div></div>
           <div class="form-row"><div class="field"><label for="service">Your service <span aria-hidden="true">*</span></label><select id="service" name="service" required aria-describedby="service-error"><option value="">Choose a little self-care</option>${salon.services.map((category) => `<optgroup label="${escape(category.name)}">${category.items.map((item) => `<option value="${escape(item.id)}">${escape(item.name)} — from ${formatPrice(item.price)}</option>`).join("")}</optgroup>`).join("")}</select><span class="field-error" id="service-error"></span></div><div class="field"><label for="branch">Preferred studio <span aria-hidden="true">*</span></label><select id="branch" name="branch" required aria-describedby="branch-error"><option value="">Choose your studio</option>${salon.branches.map((branch) => `<option value="${escape(branch.id)}">${escape(branch.name)}</option>`).join("")}</select><span class="field-error" id="branch-error"></span></div></div>
           <div class="field"><label for="datetime">Preferred date & time <span aria-hidden="true">*</span></label><input id="datetime" name="datetime" type="datetime-local" required aria-describedby="datetime-hint datetime-error"><small id="datetime-hint">Salon timezone: ${escape(salon.timeZone)}. All fields are required.</small><span class="field-error" id="datetime-error"></span></div>
+          <div class="field"><label for="offerId">Offer (optional)</label><select id="offerId" name="offerId" aria-describedby="offerId-error"><option value="">No offer</option>${activeOffers(
+            salon,
+          )
+            .map(
+              (offer) =>
+                `<option value="${escape(offer.id)}">${escape(offer.title)}</option>`,
+            )
+            .join(
+              "",
+            )}</select><span class="field-error" id="offerId-error"></span></div>
           <button class="button button-dark submit-button" type="submit">${salon.demoMode ? "Preview appointment request" : "Prepare appointment request"} ${icon("diagonal")}</button><p class="privacy-note">Your details are shared with the salon when you send your request. Availability is confirmed separately.</p>
         </form>
         <div class="confirmation" id="confirmation" role="status" aria-live="polite" tabindex="-1" hidden></div>
@@ -184,7 +202,7 @@ document.querySelector("#app").innerHTML = `
 
     <section class="section contact-section" id="contact" aria-labelledby="contact-title"><div class="container contact-grid"><div><p class="eyebrow">WE’D LOVE TO HEAR FROM YOU</p><h2 id="contact-title">Say <em>hello.</em></h2><p>A question, a special occasion, or just not sure<br>where to start? Let’s find your kind of care.</p>${salon.demoMode ? '<p class="unconfigured">Fictional demo contact details · Replace before launch</p>' : ""}</div><div class="contact-links">${salon.contact.phone ? `<a href="${phoneHref(salon.contact.phone)}">${icon("phone")}<span><small>GIVE US A CALL</small>${escape(salon.contact.phone)}</span>${icon("diagonal")}</a>` : ""}${waLink ? `<a href="${escape(waLink)}" target="_blank" rel="noopener noreferrer">${icon("whatsapp")}<span><small>A LITTLE HELLO ON WHATSAPP</small>Let’s chat</span>${icon("diagonal")}</a>` : ""}${salon.contact.email ? `<a href="mailto:${escape(salon.contact.email)}">${icon("arrow")}<span><small>EMAIL THE STUDIO</small>${escape(salon.contact.email)}</span>${icon("diagonal")}</a>` : ""}${socials.map((social) => `<a href="${escape(social.url)}" target="_blank" rel="noopener noreferrer">${icon("diagonal")}<span><small>FOLLOW ALONG</small>${escape(social.label)}</span>${icon("diagonal")}</a>`).join("")}</div><div class="contact-hours"><h3>${icon("clock")} Studio hours</h3>${hours(salon.contact.hours)}<p>${salon.demoMode ? "Sample opening hours. " : ""}See each studio for its schedule.</p></div></div></section>
   </main>
-  <footer class="site-footer"><div class="container"><div class="footer-top"><a class="brand" href="#" aria-label="${escape(salon.name)} home">${wordmark}<span class="brand-tagline">${escape(salon.tagline)}</span></a><p>A little care. A little confidence.<br>A little more you.</p><a class="footer-cta" href="#book">Your moment awaits ${icon("diagonal")}</a></div><div class="footer-bottom"><span>© ${new Date().getFullYear()} ${escape(salon.name)}. ${salon.demoMode ? "A fictional salon concept." : "All rights reserved."}</span><nav aria-label="Footer navigation"><a href="#services">Services</a><a href="#locations">Studios</a><a href="#contact">Contact</a><button class="privacy-trigger" type="button">Privacy</button></nav><span>MADE FOR YOUR KIND OF BEAUTIFUL</span></div></div></footer>
+  <footer class="site-footer"><div class="container"><div class="footer-top"><a class="brand" href="#" aria-label="${escape(salon.name)} home">${wordmark}<span class="brand-tagline">${escape(salon.tagline)}</span></a><p>A little care. A little confidence.<br>A little more you.</p><a class="footer-cta" href="#book">Your moment awaits ${icon("diagonal")}</a></div><div class="footer-bottom"><span>© ${new Date().getFullYear()} ${escape(salon.name)}. ${salon.demoMode ? "A fictional salon concept." : "All rights reserved."}</span><nav aria-label="Footer navigation"><a href="#services">Services</a><a href="#locations">Locations</a><a href="#contact">Contact</a><button class="privacy-trigger" type="button">Privacy</button></nav><span>MADE FOR YOUR KIND OF BEAUTIFUL</span></div></div></footer>
   <dialog id="gallery-dialog" class="gallery-dialog" aria-labelledby="gallery-dialog-title"><button class="dialog-close" aria-label="Close image">${icon("close")}</button><img id="gallery-full-image" alt=""><p id="gallery-dialog-title"></p></dialog>
   <dialog id="privacy-dialog" class="privacy-dialog" aria-labelledby="privacy-title"><button class="dialog-close" aria-label="Close privacy information">${icon("close")}</button><p class="eyebrow">YOUR INFORMATION</p><h2 id="privacy-title">A little privacy.</h2><p>Appointment requests and website conversations are stored in the salon database and are accessible only to authorized salon administrators. A private browser cookie keeps your website conversation accessible in this browser for up to 30 days. Clearing the cookie removes your access, but does not delete the salon record. Contact the salon to request deletion. No marketing tracking is used.</p><p>Choosing WhatsApp opens an external service with your prepared message. WhatsApp’s own privacy terms apply. No message is sent automatically.</p><p>A real salon should replace this notice with its own accurate privacy policy before launch.</p></dialog>
 `;
@@ -237,6 +255,16 @@ matchMedia("(min-width: 901px)").addEventListener("change", (event) => {
 });
 
 const form = document.querySelector("#booking-form");
+mountPublicOffers(document.querySelector("#offers"), salon, (offer) => {
+  confirmation.hidden = true;
+  form.hidden = false;
+  form.elements.offerId.value = offer.id;
+  if (offer.serviceIds.length === 1)
+    form.elements.service.value = offer.serviceIds[0];
+  if (offer.branchIds.length === 1)
+    form.elements.branch.value = offer.branchIds[0];
+  form.elements.offerId.focus();
+});
 const confirmation = document.querySelector("#confirmation");
 const dateInput = form.elements.datetime;
 dateInput.min = localDateTime(salon.timeZone);
@@ -254,12 +282,20 @@ form.addEventListener("submit", (event) => {
   event.preventDefault();
   const values = Object.fromEntries(new FormData(form));
   const errors = validateBooking(values, salon);
-  for (const name of ["name", "phone", "service", "branch", "datetime"])
+  for (const name of [
+    "name",
+    "phone",
+    "service",
+    "branch",
+    "datetime",
+    "offerId",
+  ])
     setFieldError(name, errors[name]);
   if (Object.keys(errors).length) {
     form.elements[Object.keys(errors)[0]].focus();
     return;
   }
+  const bill = bookingBill(values, salon);
   const selectedService = salon.services
     .flatMap((category) => category.items)
     .find((item) => item.id === values.service);
@@ -271,7 +307,7 @@ form.addEventListener("submit", (event) => {
     timeStyle: "short",
     timeZone: "UTC",
   }).format(new Date(`${values.datetime}:00Z`));
-  confirmation.innerHTML = `<span class="confirmation-icon">${icon("check")}</span><p class="eyebrow">${salon.demoMode ? "DEMO PREVIEW COMPLETE" : "YOUR ENQUIRY IS READY"}</p><h3>Lovely choice, ${escape(values.name.trim().split(" ")[0])}.</h3><p>Your request is prepared below. <strong>Nothing has been sent and no appointment is booked.</strong></p><dl class="request-summary"><div><dt>Service</dt><dd>${escape(selectedService.name)}</dd></div><div><dt>Studio</dt><dd>${escape(selectedBranch.name)}</dd></div><div><dt>Preferred time</dt><dd>${escape(dateLabel)}<small>${escape(salon.timeZone)}</small></dd></div></dl>${waLink ? `<a class="button button-dark" href="${escape(whatsappLink(salon, values))}" target="_blank" rel="noopener noreferrer">Continue on WhatsApp ${icon("whatsapp")}</a>` : ""}${salon.demoMode && waLink ? '<p class="privacy-note">The configured WhatsApp number is fictional. Replace it before sending an enquiry.</p>' : ""}<button class="edit-request text-link" type="button">Edit your request ${icon("arrow")}</button>`;
+  confirmation.innerHTML = `<span class="confirmation-icon">${icon("check")}</span><p class="eyebrow">${salon.demoMode ? "DEMO PREVIEW COMPLETE" : "YOUR ENQUIRY IS READY"}</p><h3>Lovely choice, ${escape(values.name.trim().split(" ")[0])}.</h3><p>Your request is prepared below. <strong>Nothing has been sent and no appointment is booked.</strong></p><dl class="request-summary"><div><dt>Service</dt><dd>${escape(selectedService.name)}</dd></div><div><dt>Studio</dt><dd>${escape(selectedBranch.name)}</dd></div><div><dt>Estimated service total</dt><dd>${formatPrice(bill.total)}${bill.discountAmount ? `<small>${escape(bill.discountLabel)}: ${formatPrice(bill.discountAmount)} off</small>` : ""}<small>Starting-price estimate; confirmed by the salon.</small></dd></div><div><dt>Preferred time</dt><dd>${escape(dateLabel)}<small>${escape(salon.timeZone)}</small></dd></div></dl>${waLink ? `<a class="button button-dark" href="${escape(whatsappLink(salon, values))}" target="_blank" rel="noopener noreferrer">Continue on WhatsApp ${icon("whatsapp")}</a>` : ""}${salon.demoMode && waLink ? '<p class="privacy-note">The configured WhatsApp number is fictional. Replace it before sending an enquiry.</p>' : ""}<button class="edit-request text-link" type="button">Edit your request ${icon("arrow")}</button>`;
   form.hidden = true;
   confirmation.hidden = false;
   confirmation.focus();

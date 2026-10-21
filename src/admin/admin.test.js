@@ -5,6 +5,9 @@ import { JSDOM, VirtualConsole } from "jsdom";
 import { salon } from "../salon.config.js";
 import { localDateTime, validateBooking } from "../booking.js";
 import * as validation from "./store.js";
+import * as payments from "./payments.js";
+import * as pricing from "../pricing.js";
+import { googleMapsLink } from "../locations.js";
 const html = await readFile(
   new URL("../../admin/index.html", import.meta.url),
   "utf8",
@@ -13,7 +16,7 @@ const script = (
   await readFile(new URL("./admin.js", import.meta.url), "utf8")
 ).replace(/^import[\s\S]*?;\s*/gm, "");
 const tick = () => new Promise((resolve) => setImmediate(resolve));
-async function page(route = "overview", original = salon) {
+async function page(route = "overview", original = salon, role = "superadmin") {
   let config = structuredClone(original);
   let requests = [];
   let revision = 1;
@@ -29,19 +32,25 @@ async function page(route = "overview", original = salon) {
   });
   Object.assign(dom.window, {
     defaults: salon,
+    googleMapsLink,
     structuredClone,
     localDateTime,
     validateBooking,
     ...validation,
+    ...payments,
+    ...pricing,
     confirm: () => true,
     setCsrf: () => {},
     mountAdminChat: () => {},
+    mountAdminAccounts: () => {},
+    mountReports: () => {},
     api: async (url, options) => {
       if (url === "/api/auth/session")
         return {
-          user: { role: "admin", email: "demo@example.test" },
+          user: { role, email: "demo@example.test" },
           csrf: "test-csrf",
         };
+      if (url === "/api/admin/system") return { database: "Supabase Postgres" };
       if (options?.method === "PUT") {
         if (failure) throw new Error(failure);
         if (url.endsWith("/settings")) {
@@ -181,6 +190,93 @@ test("website settings reject invalid WhatsApp numbers before saving shared sett
   assert.equal(saved().config.name, "Connected Test Salon");
   close();
 });
+
+test("appointment payment records validate online references, persist and can be searched and filtered", async () => {
+  const { dom, doc, saved, close } = await page("appointments");
+  try {
+    doc.querySelector('[data-action="new-request"]').click();
+    const form = doc.querySelector("#editor-form");
+    for (const [key, value] of Object.entries({
+      name: "Payment guest",
+      phone: "2025550147",
+      service: "cut",
+      branch: "garden",
+      datetime: "2099-02-20T14:30",
+      paymentMethod: "Online",
+      paymentStatus: "Paid",
+      paymentAmount: "55",
+    }))
+      form.elements[key].value = value;
+    await submit(dom, form);
+    assert.match(form.querySelector(".form-error").textContent, /reference/);
+    assert.equal(saved().requests.length, 0);
+    form.elements.paymentReference.value = "BANK-123";
+    await submit(dom, form);
+    assert.equal(saved().requests[0].payment.amount, 55);
+    assert.equal(saved().requests[0].payment.method, "Online");
+    assert.match(doc.querySelector("#request-rows").textContent, /BANK-123/);
+    const filter = doc.querySelector("#payment-filter");
+    filter.value = "Pending";
+    filter.dispatchEvent(new dom.window.Event("change"));
+    assert.match(doc.querySelector("#request-rows").textContent, /No matching/);
+    filter.value = "Paid";
+    filter.dispatchEvent(new dom.window.Event("change"));
+    const search = doc.querySelector("#request-search");
+    search.value = "BANK-123";
+    search.dispatchEvent(new dom.window.Event("input"));
+    assert.equal(doc.querySelectorAll(".guest-cell").length, 1);
+  } finally {
+    close();
+  }
+});
+
+test("admins can publish scoped offers and apply a manual discount with a visible final bill", async () => {
+  const offersPage = await page("offers", salon, "admin");
+  try {
+    offersPage.doc.querySelector('[data-action="new-offer"]').click();
+    const form = offersPage.doc.querySelector("#editor-form");
+    form.elements.offerTitle.value = "Demo summer care";
+    form.elements.offerEnabled.value = "yes";
+    form.elements.offerValue.value = "15";
+    offersPage.doc.querySelector(
+      '[name="offerServices"][value="cut"]',
+    ).checked = true;
+    await submit(offersPage.dom, form);
+    assert.equal(offersPage.saved().config.offers[0].value, 15);
+    assert.deepEqual(
+      [...offersPage.saved().config.offers[0].serviceIds],
+      ["cut"],
+    );
+  } finally {
+    offersPage.close();
+  }
+  const appointment = await page("appointments");
+  try {
+    appointment.doc.querySelector('[data-action="new-request"]').click();
+    const form = appointment.doc.querySelector("#editor-form");
+    for (const [key, value] of Object.entries({
+      name: "Discount guest",
+      phone: "2025550147",
+      service: "cut",
+      branch: "garden",
+      datetime: "2099-02-20T14:30",
+      billSubtotal: "100",
+      billDiscountType: "Percent",
+      billDiscountValue: "10",
+      billDiscountLabel: "Welcome discount",
+    }))
+      form.elements[key].value = value;
+    form.dispatchEvent(
+      new appointment.dom.window.Event("change", { bubbles: true }),
+    );
+    assert.match(form.querySelector("#bill-preview").textContent, /90/);
+    await submit(appointment.dom, form);
+    assert.equal(appointment.saved().requests[0].billing.total, 90);
+    assert.equal(appointment.saved().requests[0].billing.discountAmount, 10);
+  } finally {
+    appointment.close();
+  }
+});
 test("gallery creation persists accessible image data through the shared settings API", async () => {
   const { dom, doc, saved, close } = await page("gallery");
   doc.querySelector('[data-action="new-photo"]').click();
@@ -195,4 +291,24 @@ test("gallery creation persists accessible image data through the shared setting
   await submit(dom, form);
   assert.equal(saved().config.gallery.length, 5);
   close();
+});
+
+test("website settings are exclusive to superadmins and show the live database provider", async () => {
+  const owner = await page("settings");
+  assert.ok(owner.doc.querySelector('[href="#settings"]'));
+  assert.match(owner.doc.querySelector(".owner").textContent, /Superadmin/);
+  assert.ok(owner.doc.querySelector('[href="#accounts"]'));
+  owner.doc.querySelector('[data-tab="data"]').click();
+  assert.match(
+    owner.doc.querySelector(".settings-panel").textContent,
+    /Supabase Postgres/,
+  );
+  owner.close();
+  const admin = await page("settings", salon, "admin");
+  assert.equal(admin.doc.querySelector('[href="#settings"]'), null);
+  assert.equal(admin.doc.querySelector('[href="#accounts"]'), null);
+  assert.equal(admin.doc.querySelector("#settings-form"), null);
+  assert.match(admin.doc.querySelector(".owner").textContent, /Salon admin/);
+  assert.ok(admin.doc.querySelector('[href="#locations"]'));
+  admin.close();
 });

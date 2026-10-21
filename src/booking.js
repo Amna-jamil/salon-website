@@ -1,3 +1,5 @@
+import { bookingBill } from "./pricing.js";
+
 export function localDateTime(timeZone, now = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone,
@@ -39,6 +41,13 @@ export function validateBooking(
     Number.isFinite(Date.parse(values.datetime));
   if (!validDate || values.datetime <= now)
     errors.datetime = "Choose a future date and time in the salon’s timezone.";
+  if (values.offerId && !errors.service && !errors.branch && !errors.datetime) {
+    try {
+      bookingBill(values, salon);
+    } catch (error) {
+      errors.offerId = error.message;
+    }
+  }
   return errors;
 }
 
@@ -52,6 +61,10 @@ export function whatsappLink(salon, values) {
       .find((item) => item.id === values.service);
     const branch = salon.branches.find((item) => item.id === values.branch);
     message += `\nName: ${values.name.trim()}\nPhone: ${values.phone.trim()}\nService: ${service.name}\nStudio: ${branch.name}\nPreferred date & time: ${values.datetime.replace("T", " ")} (${salon.timeZone})\nPlease let me know your availability. Thank you!`;
+    if (values.offerId) {
+      const bill = bookingBill(values, salon);
+      message += `\nOffer: ${bill.discountLabel}\nEstimated total: ${bill.total} ${bill.currency} (salon confirmation required).`;
+    }
   }
   return `https://wa.me/${number}?text=${encodeURIComponent(message)}`;
 }

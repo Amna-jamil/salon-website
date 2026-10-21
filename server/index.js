@@ -1,5 +1,4 @@
-import { resolve } from "node:path";
-import { openDatabase } from "./database.js";
+import { openConfiguredDatabase } from "./database.js";
 import { createApp } from "./app.js";
 
 const production =
@@ -10,9 +9,7 @@ if (production && (!appOrigin || !appOrigin.startsWith("https://")))
   throw new Error(
     "Set APP_ORIGIN to the public HTTPS origin before starting production.",
   );
-const db = openDatabase(
-  resolve(process.env.DATABASE_PATH || "data/salon.sqlite"),
-);
+const db = await openConfiguredDatabase();
 const vite =
   production || process.argv.includes("--preview")
     ? null
@@ -36,7 +33,7 @@ async function shutdown() {
   server.closeAllConnections();
   server.close();
   await vite?.close();
-  db.close();
+  await db.close();
 }
 process.once("SIGINT", shutdown);
 process.once("SIGTERM", shutdown);

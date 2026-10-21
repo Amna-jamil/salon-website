@@ -1,6 +1,6 @@
 /**
  * INITIAL DATABASE SEED AND PORTABLE CONFIGURATION
- * After initial setup, use the authorized admin panel; saved SQLite settings
+ * After initial setup, use the authorized admin panel; saved database settings
  * are the source of truth. This file does not overwrite existing database data.
  * Replace the demo content before launch, then import with demoMode: false.
  * Photos live in public/images; paths start with /images/.

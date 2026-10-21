@@ -2,6 +2,9 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, chmodSync } from "node:fs";
 import { dirname } from "node:path";
 import { salon } from "../src/salon.config.js";
+import { sqliteAdapter, openPostgres } from "./connection.js";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 
 export function openDatabase(filename) {
   if (filename !== ":memory:")
@@ -20,37 +23,50 @@ export function openDatabase(filename) {
     CREATE INDEX IF NOT EXISTS messages_conversation ON messages(conversation_id,id);
     CREATE INDEX IF NOT EXISTS conversations_guest ON conversations(guest_hash);
     CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at);`);
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS superadmins(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE)",
+  );
   db.prepare("INSERT OR IGNORE INTO settings(id,data) VALUES(1,?)").run(
     JSON.stringify(salon),
   );
   db.prepare("INSERT OR IGNORE INTO request_state(id) VALUES(1)").run();
-  return db;
+  return sqliteAdapter(db);
+}
+
+export async function openConfiguredDatabase() {
+  if (process.env.DATABASE_URL) {
+    const ca = process.env.DATABASE_CA_PATH
+      ? await readFile(resolve(process.env.DATABASE_CA_PATH), "utf8")
+      : undefined;
+    return openPostgres(process.env.DATABASE_URL, { ca });
+  }
+  if (process.env.SUPABASE_PROJECT_REF)
+    throw new Error(
+      "Supabase is selected but DATABASE_URL is missing. Local storage fallback is disabled.",
+    );
+  return openDatabase(
+    resolve(process.env.DATABASE_PATH || "data/salon.sqlite"),
+  );
 }
 
 export function transaction(db, work) {
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    const result = work();
-    db.exec("COMMIT");
-    return result;
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
+  return db.transaction(work);
 }
 
-export function getSettings(db) {
-  const row = db.prepare("SELECT data,revision FROM settings WHERE id=1").get();
+export async function getSettings(db) {
+  const row = await db
+    .prepare("SELECT data,revision FROM settings WHERE id=1")
+    .get();
   return { config: JSON.parse(row.data), revision: row.revision };
 }
 
-export function getAppointments(db) {
+export async function getAppointments(db) {
   return {
-    requests: db
-      .prepare("SELECT data FROM appointments ORDER BY rowid")
-      .all()
-      .map((row) => JSON.parse(row.data)),
-    revision: db.prepare("SELECT revision FROM request_state WHERE id=1").get()
-      .revision,
+    requests: (
+      await db.prepare("SELECT data FROM appointments ORDER BY rowid").all()
+    ).map((row) => JSON.parse(row.data)),
+    revision: (
+      await db.prepare("SELECT revision FROM request_state WHERE id=1").get()
+    ).revision,
   };
 }

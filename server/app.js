@@ -2,6 +2,7 @@ import express from "express";
 import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { getSettings, getAppointments, transaction } from "./database.js";
@@ -12,6 +13,9 @@ import {
   tokenHash,
   hashPassword,
   verifyPassword,
+  effectiveRole,
+  isAdminRole,
+  provisionAdmin,
 } from "./auth.js";
 import {
   validateConfig,
@@ -19,6 +23,7 @@ import {
   makeRequest,
 } from "../src/admin/store.js";
 import { validateBooking } from "../src/booking.js";
+import { stampPayments } from "./payments.js";
 
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const text = (value, label, max, required = true) => {
@@ -107,10 +112,10 @@ export async function createApp({
     sameSite: "strict",
     path: "/",
   };
-  const requireAdmin = (req, res, next) => {
-    req.admin = adminSession(db, req);
+  const requireAdmin = async (req, res, next) => {
+    req.admin = await adminSession(db, req);
     if (!req.admin) return next(fail(401, "Sign in to continue."));
-    if (req.admin.role !== "admin")
+    if (!isAdminRole(req.admin.role))
       return next(
         fail(403, "This account is not authorized to manage the salon."),
       );
@@ -126,53 +131,57 @@ export async function createApp({
       );
     next();
   };
-  function guest(req, res, create = false) {
+  async function guest(req, res, create = false) {
     const token = cookies(req).salon_guest;
     const hash = token && /^[a-f\d]{64}$/.test(token) ? tokenHash(token) : "";
     if (
       hash &&
-      db
+      (await db
         .prepare(
           "SELECT token_hash FROM guest_sessions WHERE token_hash=? AND expires_at>?",
         )
-        .get(hash, Date.now())
+        .get(hash, Date.now()))
     )
       return hash;
     if (!create) return null;
     const fresh = newToken();
     const token_hash = tokenHash(fresh);
-    db.prepare("INSERT INTO guest_sessions VALUES(?,?)").run(
-      token_hash,
-      Date.now() + 30 * 86400000,
-    );
+    await db
+      .prepare("INSERT INTO guest_sessions VALUES(?,?)")
+      .run(token_hash, Date.now() + 30 * 86400000);
     res.cookie("salon_guest", fresh, {
       ...cookieOptions,
       maxAge: 30 * 86400000,
     });
     return token_hash;
   }
-  const messageList = (id) =>
-    db
+  const messageList = async (id) =>
+    await db
       .prepare(
         "SELECT id,sender,body,created_at AS createdAt FROM messages WHERE conversation_id=? ORDER BY id",
       )
       .all(id);
-  function addMessage(id, sender, body) {
+  async function addMessage(id, sender, body) {
     const created = new Date().toISOString();
-    db.prepare(
-      "INSERT INTO messages(conversation_id,sender,body,created_at) VALUES(?,?,?,?)",
-    ).run(id, sender, body, created);
-    db.prepare("UPDATE conversations SET updated_at=? WHERE id=?").run(
-      created,
-      id,
-    );
+    await db
+      .prepare(
+        "INSERT INTO messages(conversation_id,sender,body,created_at) VALUES(?,?,?,?)",
+      )
+      .run(id, sender, body, created);
+    await db
+      .prepare("UPDATE conversations SET updated_at=? WHERE id=?")
+      .run(created, id);
   }
-  app.get("/api/health", (req, res) => res.json({ ok: true }));
-  app.get("/api/salon", (req, res) => res.json(getSettings(db)));
-  app.get("/api/salon/version", (req, res) =>
+  app.get("/api/health", async (req, res) => {
+    await db.prepare("SELECT revision FROM settings WHERE id=1").get();
+    res.json({ ok: true });
+  });
+  app.get("/api/salon", async (req, res) => res.json(await getSettings(db)));
+  app.get("/api/salon/version", async (req, res) =>
     res.json({
-      revision: db.prepare("SELECT revision FROM settings WHERE id=1").get()
-        .revision,
+      revision: (
+        await db.prepare("SELECT revision FROM settings WHERE id=1").get()
+      ).revision,
     }),
   );
   const dummyHash = await hashPassword(newToken());
@@ -184,27 +193,30 @@ export async function createApp({
         typeof req.body.email === "string"
           ? req.body.email.trim().toLowerCase()
           : "";
-      const user = db.prepare("SELECT * FROM users WHERE email=?").get(email);
+      const user = await db
+        .prepare(
+          `SELECT users.id,users.email,users.password_hash,${effectiveRole} AS role FROM users WHERE email=?`,
+        )
+        .get(email);
       const valid = await verifyPassword(
         req.body.password,
         user?.password_hash || dummyHash,
       );
-      if (!valid || !user || user.role !== "admin")
+      if (!valid || !user || !isAdminRole(user.role))
         throw fail(401, "Email or password was not accepted.");
       const old = cookies(req).salon_session;
       if (old)
-        db.prepare("DELETE FROM sessions WHERE token_hash=?").run(
-          tokenHash(old),
-        );
+        await db
+          .prepare("DELETE FROM sessions WHERE token_hash=?")
+          .run(tokenHash(old));
       const token = newToken();
       const csrf = newToken();
-      db.prepare("DELETE FROM sessions WHERE expires_at<=?").run(Date.now());
-      db.prepare("INSERT INTO sessions VALUES(?,?,?,?)").run(
-        tokenHash(token),
-        user.id,
-        csrf,
-        Date.now() + 8 * 3600000,
-      );
+      await db
+        .prepare("DELETE FROM sessions WHERE expires_at<=?")
+        .run(Date.now());
+      await db
+        .prepare("INSERT INTO sessions VALUES(?,?,?,?)")
+        .run(tokenHash(token), user.id, csrf, Date.now() + 8 * 3600000);
       res.cookie("salon_session", token, {
         ...cookieOptions,
         maxAge: 8 * 3600000,
@@ -218,21 +230,86 @@ export async function createApp({
       csrf: req.admin.csrf,
     }),
   );
-  app.post("/api/auth/logout", requireAdmin, (req, res) => {
-    db.prepare("DELETE FROM sessions WHERE token_hash=?").run(
-      tokenHash(cookies(req).salon_session),
-    );
+  app.post("/api/auth/logout", requireAdmin, async (req, res) => {
+    await db
+      .prepare("DELETE FROM sessions WHERE token_hash=?")
+      .run(tokenHash(cookies(req).salon_session));
     res.clearCookie("salon_session", cookieOptions).json({ ok: true });
   });
   app.use("/api/admin", requireAdmin);
-  app.get("/api/admin/settings", (req, res) => res.json(getSettings(db)));
-  app.put("/api/admin/settings", (req, res) => {
+  const requireSuperadmin = (req, res, next) => {
+    if (req.admin.role !== "superadmin")
+      return next(fail(403, "Superadmin access is required."));
+    next();
+  };
+  app.get("/api/admin/accounts", requireSuperadmin, async (req, res) => {
+    const accounts = await db
+      .prepare(
+        `SELECT users.id,users.email,${effectiveRole} AS role,users.created_at AS createdAt FROM users WHERE users.role='admin' ORDER BY users.created_at DESC`,
+      )
+      .all();
+    res.json({ accounts });
+  });
+  const accountLimiter = rateLimit({
+    windowMs: 3600000,
+    limit: 10,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    message: { error: "Too many account creation attempts. Try again later." },
+  });
+  app.post(
+    "/api/admin/accounts",
+    requireSuperadmin,
+    ...(limits ? [accountLimiter] : []),
+    async (req, res) => {
+      if (req.body.role !== undefined && req.body.role !== "admin")
+        throw fail(400, "Only normal admin accounts can be created here.");
+      const user = await provisionAdmin(db, req.body.email, req.body.password);
+      res.status(201).json({ user });
+    },
+  );
+  app.get("/api/admin/system", (req, res) => {
+    if (req.admin.role !== "superadmin")
+      throw fail(403, "Superadmin access is required.");
+    res.json({
+      database:
+        db.dialect === "postgres" ? "Supabase Postgres" : "Local SQLite",
+      whatsappSync: false,
+    });
+  });
+  app.get("/api/admin/settings", async (req, res) =>
+    res.json(await getSettings(db)),
+  );
+  app.put("/api/admin/settings", async (req, res) => {
     try {
       validateConfig(req.body.config);
     } catch (error) {
       throw fail(400, error.message);
     }
-    const update = db
+    if (req.admin.role !== "superadmin") {
+      const current = (await getSettings(db)).config;
+      const operational = new Set([
+        "services",
+        "gallery",
+        "branches",
+        "reviews",
+        "offers",
+      ]);
+      for (const key of new Set([
+        ...Object.keys(current),
+        ...Object.keys(req.body.config),
+      ])) {
+        if (
+          !operational.has(key) &&
+          !isDeepStrictEqual(current[key], req.body.config[key])
+        )
+          throw fail(
+            403,
+            "Only a superadmin can change website settings, contact details, branding or SEO.",
+          );
+      }
+    }
+    const update = await db
       .prepare(
         "UPDATE settings SET data=?,revision=revision+1 WHERE id=1 AND revision=?",
       )
@@ -242,19 +319,19 @@ export async function createApp({
         409,
         "Salon settings changed elsewhere. Reload before editing again. Your unsaved changes have not been applied.",
       );
-    res.json(getSettings(db));
+    res.json(await getSettings(db));
   });
-  app.get("/api/admin/appointments", (req, res) =>
-    res.json(getAppointments(db)),
+  app.get("/api/admin/appointments", async (req, res) =>
+    res.json(await getAppointments(db)),
   );
-  app.put("/api/admin/appointments", (req, res) => {
+  app.put("/api/admin/appointments", async (req, res) => {
     try {
       validateRequests(req.body.requests);
     } catch (error) {
       throw fail(400, error.message);
     }
-    transaction(db, () => {
-      const update = db
+    await transaction(db, async () => {
+      const update = await db
         .prepare(
           "UPDATE request_state SET revision=revision+1 WHERE id=1 AND revision=?",
         )
@@ -264,19 +341,39 @@ export async function createApp({
           409,
           "The appointment inbox changed. Reload to include the latest requests before saving.",
         );
-      db.exec("DELETE FROM appointments");
-      const insert = db.prepare("INSERT INTO appointments VALUES(?,?)");
-      req.body.requests.forEach((item) =>
-        insert.run(item.id, JSON.stringify(item)),
+      const current = await getAppointments(db);
+      const kept = new Set(req.body.requests.map((item) => item.id));
+      if (
+        current.requests.some(
+          (item) =>
+            !kept.has(item.id) &&
+            ((item.payment?.amount || 0) > 0 || item.payment?.entries?.length),
+        )
+      )
+        throw fail(
+          409,
+          "Appointments with received payments or payment history cannot be deleted. Mark the appointment Cancelled to keep its financial records.",
+        );
+      const { config } = await getSettings(db);
+      const records = stampPayments(
+        req.body.requests,
+        current.requests,
+        config.currency,
+        req.admin.email,
+        config.timeZone,
       );
+      await db.exec("DELETE FROM appointments");
+      const insert = db.prepare("INSERT INTO appointments VALUES(?,?)");
+      for (const item of records)
+        await insert.run(item.id, JSON.stringify(item));
     });
-    res.json(getAppointments(db));
+    res.json(await getAppointments(db));
   });
   app.post(
     "/api/appointments",
     ...(limits ? [publicLimiter] : []),
-    (req, res) => {
-      const { config } = getSettings(db);
+    async (req, res) => {
+      const { config } = await getSettings(db);
       const values = req.body;
       if (
         !["name", "phone", "service", "branch", "datetime"].every(
@@ -297,51 +394,56 @@ export async function createApp({
             "Check your name and phone number.",
         );
       const request = makeRequest(values, config, "Website");
-      transaction(db, () => {
+      await transaction(db, async () => {
         if (
-          db.prepare("SELECT count(*) AS count FROM appointments").get()
+          (await db.prepare("SELECT count(*) AS count FROM appointments").get())
             .count >= 2000
         )
           throw fail(
             503,
             "Online enquiries are temporarily full. Please contact the salon by phone.",
           );
-        db.prepare("INSERT INTO appointments VALUES(?,?)").run(
-          request.id,
-          JSON.stringify(request),
+        await db
+          .prepare("INSERT INTO appointments VALUES(?,?)")
+          .run(request.id, JSON.stringify(request));
+        await db.exec(
+          "UPDATE request_state SET revision=revision+1 WHERE id=1",
         );
-        db.exec("UPDATE request_state SET revision=revision+1 WHERE id=1");
       });
       res.status(201).json({ id: request.id, status: request.status });
     },
   );
-  app.get("/api/chat/conversation", (req, res) => {
-    const owner = guest(req, res);
+  app.get("/api/chat/conversation", async (req, res) => {
+    const owner = await guest(req, res);
     const row = owner
-      ? db
+      ? await db
           .prepare(
             "SELECT id,name,phone FROM conversations WHERE guest_hash=? ORDER BY updated_at DESC LIMIT 1",
           )
           .get(owner)
       : null;
     res.json({
-      conversation: row ? { ...row, messages: messageList(row.id) } : null,
+      conversation: row
+        ? { ...row, messages: await messageList(row.id) }
+        : null,
     });
   });
   app.post(
     "/api/chat/conversations",
     ...(limits ? [publicLimiter] : []),
-    (req, res) => {
+    async (req, res) => {
       const name = text(req.body.name, "name", 100);
       const phone = text(req.body.phone || "", "phone", 30, false);
       const body = text(req.body.message, "message", 2000);
-      const owner = guest(req, res, true);
+      const owner = await guest(req, res, true);
       if (
-        db
-          .prepare(
-            "SELECT count(*) AS count FROM conversations WHERE guest_hash=?",
-          )
-          .get(owner).count >= 10
+        (
+          await db
+            .prepare(
+              "SELECT count(*) AS count FROM conversations WHERE guest_hash=?",
+            )
+            .get(owner)
+        ).count >= 10
       )
         throw fail(
           429,
@@ -349,37 +451,39 @@ export async function createApp({
         );
       const id = randomUUID();
       const now = new Date().toISOString();
-      transaction(db, () => {
-        db.prepare(
-          "INSERT INTO conversations(id,guest_hash,name,phone,created_at,updated_at) VALUES(?,?,?,?,?,?)",
-        ).run(id, owner, name, phone, now, now);
-        addMessage(id, "customer", body);
+      await transaction(db, async () => {
+        await db
+          .prepare(
+            "INSERT INTO conversations(id,guest_hash,name,phone,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+          )
+          .run(id, owner, name, phone, now, now);
+        await addMessage(id, "customer", body);
       });
-      res
-        .status(201)
-        .json({ conversation: { id, name, phone, messages: messageList(id) } });
+      res.status(201).json({
+        conversation: { id, name, phone, messages: await messageList(id) },
+      });
     },
   );
   app.post(
     "/api/chat/conversations/:id/messages",
     ...(limits ? [publicLimiter] : []),
-    (req, res) => {
-      const owner = guest(req, res);
+    async (req, res) => {
+      const owner = await guest(req, res);
       if (
         !owner ||
-        !db
+        !(await db
           .prepare("SELECT id FROM conversations WHERE id=? AND guest_hash=?")
-          .get(req.params.id, owner)
+          .get(req.params.id, owner))
       )
         throw fail(404, "Conversation not found in this browser.");
       const body = text(req.body.message, "message", 2000);
-      addMessage(req.params.id, "customer", body);
-      res.status(201).json({ messages: messageList(req.params.id) });
+      await addMessage(req.params.id, "customer", body);
+      res.status(201).json({ messages: await messageList(req.params.id) });
     },
   );
-  app.get("/api/admin/conversations", (req, res) =>
+  app.get("/api/admin/conversations", async (req, res) =>
     res.json({
-      conversations: db
+      conversations: await db
         .prepare(
           `SELECT c.id,c.name,c.phone,c.updated_at AS updatedAt,(SELECT body FROM messages WHERE conversation_id=c.id ORDER BY id DESC LIMIT 1) AS lastMessage,(SELECT count(*) FROM messages WHERE conversation_id=c.id AND sender='customer' AND created_at>c.admin_read_at) AS unread FROM conversations c ORDER BY updated_at DESC`,
         )
@@ -387,41 +491,47 @@ export async function createApp({
       whatsappSync: false,
     }),
   );
-  app.get("/api/admin/conversations/:id", (req, res) => {
-    const row = db
+  app.get("/api/admin/conversations/:id", async (req, res) => {
+    const row = await db
       .prepare("SELECT id,name,phone FROM conversations WHERE id=?")
       .get(req.params.id);
     if (!row) throw fail(404, "Conversation not found.");
-    const messages = messageList(row.id);
-    db.prepare("UPDATE conversations SET admin_read_at=? WHERE id=?").run(
-      new Date().toISOString(),
-      row.id,
-    );
+    const messages = await messageList(row.id);
+    await db
+      .prepare("UPDATE conversations SET admin_read_at=? WHERE id=?")
+      .run(new Date().toISOString(), row.id);
     res.json({ conversation: { ...row, messages } });
   });
-  app.post("/api/admin/conversations/:id/messages", (req, res) => {
+  app.post("/api/admin/conversations/:id/messages", async (req, res) => {
     if (
-      !db.prepare("SELECT id FROM conversations WHERE id=?").get(req.params.id)
+      !(await db
+        .prepare("SELECT id FROM conversations WHERE id=?")
+        .get(req.params.id))
     )
       throw fail(404, "Conversation not found.");
     const body = text(req.body.message, "reply", 2000);
-    addMessage(req.params.id, "admin", body);
-    res.status(201).json({ messages: messageList(req.params.id) });
+    await addMessage(req.params.id, "admin", body);
+    res.status(201).json({ messages: await messageList(req.params.id) });
   });
   app.use("/api", (req, res) =>
     res.status(404).json({ error: "API route not found." }),
   );
-  app.use("/admin", (req, res, next) => {
+  app.use("/admin", async (req, res, next) => {
     res
       .set("Cache-Control", "no-store")
       .set("X-Robots-Tag", "noindex, nofollow");
     if (req.path === "/login" || req.path === "/login/") return next();
-    const session = adminSession(db, req);
+    const session = await adminSession(db, req);
     if (!session) return res.redirect(303, "/admin/login");
-    if (session.role !== "admin")
+    if (!isAdminRole(session.role))
       return res
         .status(403)
         .send("This account cannot access salon administration.");
+    if (
+      /^\/(?:settings|accounts)(?:\/|$)/.test(req.path) &&
+      session.role !== "superadmin"
+    )
+      return res.status(403).send("This page requires superadmin access.");
     next();
   });
   async function page(req, res, next) {
@@ -436,7 +546,7 @@ export async function createApp({
       let html = await readFile(resolve(vite ? "." : dist, file), "utf8");
       if (vite) html = await vite.transformIndexHtml(req.originalUrl, html);
       if (!isAdmin) {
-        const { config } = getSettings(db);
+        const { config } = await getSettings(db);
         html = html
           .replace(
             /<title>.*?<\/title>/,

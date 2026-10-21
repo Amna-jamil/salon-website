@@ -1369,6 +1369,12 @@ tbody tr:hover {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 24px;
 }
+.location-card .subtle-link {
+  display: flex;
+  width: fit-content;
+  min-height: 44px;
+  margin-top: 12px;
+}
 .location-card > img {
   height: 220px;
   width: 100%;
@@ -1453,6 +1459,162 @@ tbody tr:hover {
   grid-template-columns: 190px minmax(0, 1fr);
   gap: 28px;
   align-items: start;
+}
+.accounts-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+  align-items: start;
+}
+.report-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.report-controls .field {
+  min-width: 180px;
+  flex: 1;
+}
+.report-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin: 24px 0;
+}
+.report-stats > div {
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.report-stats span {
+  color: var(--muted);
+  font-size: 12px;
+  display: block;
+}
+.report-stats strong {
+  display: block;
+  font-size: 30px;
+  margin-top: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.report-money {
+  padding: 24px 0;
+  border-top: 1px solid var(--border);
+}
+.report-money h2 {
+  overflow-wrap: anywhere;
+}
+.report-money .detail-list div {
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+.report-money dd {
+  font-variant-numeric: tabular-nums;
+}
+.offer-admin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+.offer-scope {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  min-width: 0;
+}
+.offer-scope > p {
+  color: var(--muted);
+  font-size: 12px;
+}
+.offer-scope label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  cursor: pointer;
+}
+.offer-scope input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--primary);
+}
+@media (max-width: 700px) {
+  .report-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .offer-admin-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .report-controls .btn {
+    flex: 1;
+  }
+}
+.payment-fields {
+  min-width: 0;
+  margin: 8px 0;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.payment-fields legend {
+  padding: 0 8px;
+  font-weight: 600;
+}
+.payment-fields > p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 0 0 20px;
+  overflow-wrap: anywhere;
+}
+.payment-fields > p:last-child {
+  margin-bottom: 0;
+}
+.accounts-layout .field small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.account-success {
+  color: var(--green);
+  overflow-wrap: anywhere;
+}
+.account-success:empty {
+  display: none;
+}
+.accounts-list {
+  list-style: none;
+  margin: 0 0 24px;
+  padding: 0;
+}
+.accounts-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+.accounts-list strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.accounts-list span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.accounts-layout a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+@media (max-width: 1000px) {
+  .accounts-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .settings-nav {
   display: flex;

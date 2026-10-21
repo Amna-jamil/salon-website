@@ -40,3 +40,38 @@ test("malformed appointment imports and duplicate IDs are rejected", () => {
     validateRequests([{ ...records[0], status: "Auto-booked" }]),
   );
 });
+
+test("payment validation keeps legacy records valid and rejects inconsistent received-payment records", () => {
+  const [record] = sampleRequests(salon, "2099-02-20");
+  const legacy = { ...record };
+  delete legacy.payment;
+  assert.equal(validateRequests([legacy]).length, 1);
+  assert.equal(record.payment.status, "Pending");
+  for (const change of [
+    { amount: -1 },
+    { amount: 1.001 },
+    { status: "Verified by gateway" },
+    { amount: 10 },
+    { method: "Online", status: "Paid", amount: 10 },
+    { method: "Unrecorded", status: "Paid", amount: 10 },
+  ])
+    assert.throws(() =>
+      validateRequests([
+        { ...record, payment: { ...record.payment, ...change } },
+      ]),
+    );
+  assert.equal(
+    validateRequests([
+      {
+        ...record,
+        payment: {
+          ...record.payment,
+          method: "Cash",
+          status: "Paid",
+          amount: 50,
+        },
+      },
+    ]).length,
+    1,
+  );
+});

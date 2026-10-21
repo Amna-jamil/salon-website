@@ -1,3 +1,4 @@
+import { googleMapsLink } from "../locations.js";
 import "../fonts.css";
 import "./admin.css";
 import { salon as defaults } from "../salon.config.js";
@@ -11,6 +12,20 @@ import {
 } from "./store.js";
 import { api, setCsrf } from "../api.js";
 import { mountAdminChat } from "./chat.js";
+import { mountAdminAccounts } from "./accounts.js";
+import { mountReports } from "./reports.js";
+import {
+  activeOffers,
+  calculateBill,
+  bookingBill,
+  DISCOUNT_TYPES,
+} from "../pricing.js";
+import {
+  PAYMENT_METHODS,
+  PAYMENT_STATUSES,
+  paymentRecord,
+  validatePayment,
+} from "./payments.js";
 
 const esc = (value = "") =>
   String(value).replace(
@@ -49,6 +64,8 @@ const icon = (name) =>
   `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.grid}</svg>`;
 const session = await api("/api/auth/session");
 setCsrf(session.csrf);
+const isSuperadmin = session.user.role === "superadmin";
+const system = isSuperadmin ? await api("/api/admin/system") : null;
 const [configResult, requestsResult] = await Promise.all([
   api("/api/admin/settings"),
   api("/api/admin/appointments"),
@@ -62,6 +79,7 @@ let route = location.hash.slice(1).split("?")[0] || "overview";
 let search = "";
 let statusFilter = "all";
 let branchFilter = "all";
+let paymentFilter = "all";
 let selectedDay = localDateTime(config.timeZone).slice(0, 10);
 let month = new Date(`${selectedDay.slice(0, 7)}-01T12:00:00Z`);
 let viewTab = "identity";
@@ -71,12 +89,19 @@ const dialog = document.querySelector("#editor");
 const nav = [
   ["overview", "grid", "Overview"],
   ["appointments", "calendar", "Appointments"],
+  ["reports", "grid", "Clients & earnings"],
+  ["offers", "quote", "Deals & offers"],
   ["conversations", "quote", "Customer conversations"],
   ["services", "scissors", "Services & pricing"],
   ["gallery", "image", "Gallery"],
   ["locations", "pin", "Locations"],
   ["reviews", "quote", "Demo reviews"],
-  ["settings", "settings", "Website settings"],
+  ...(isSuperadmin
+    ? [
+        ["accounts", "grid", "Admin accounts"],
+        ["settings", "settings", "Website settings"],
+      ]
+    : []),
 ];
 const today = () => localDateTime(config.timeZone).slice(0, 10);
 const money = (value) =>
@@ -151,11 +176,15 @@ function render() {
   const pending = requests.filter((item) => item.status === "Pending").length;
   const title = nav.find(([id]) => id === route)[2];
   app.innerHTML = `
-    <aside class="sidebar" id="sidebar"><a class="admin-brand" href="#overview"><span>${esc(config.name.toLowerCase())}<i>✧</i></span><small>THE STUDIO MANAGER</small></a><div class="workspace"><span class="workspace-icon">${icon("scissors")}</span><span>${esc(config.name)} beauty studio<small>Connected salon workspace</small></span><span class="workspace-dot"></span></div><p class="nav-label">WORKSPACE</p><nav aria-label="Admin navigation">${nav.map(([id, symbol, label]) => `<a href="#${id}" class="nav-item ${id === route ? "active" : ""}" ${id === route ? 'aria-current="page"' : ""}>${icon(symbol)}<span>${label}</span>${id === "appointments" && pending ? `<span class="nav-count">${pending}</span>` : ""}</a>`).join("")}</nav><div class="sidebar-bottom"><div class="sidebar-note">${icon("sun")}<strong>A little care, behind the scenes.</strong><p>A calm space to keep your salon beautifully organized.</p></div><a class="view-site" href="/" target="_blank" rel="noopener">${icon("external")}View customer website${icon("arrow")}</a><div class="owner"><span class="owner-avatar">${esc(config.name[0].toUpperCase())}</span><span>Studio owner<small>Authorized salon admin</small></span></div></div></aside>
+    <aside class="sidebar" id="sidebar"><a class="admin-brand" href="#overview"><span>${esc(config.name.toLowerCase())}<i>✧</i></span><small>THE STUDIO MANAGER</small></a><div class="workspace"><span class="workspace-icon">${icon("scissors")}</span><span>${esc(config.name)} beauty studio<small>Connected salon workspace</small></span><span class="workspace-dot"></span></div><p class="nav-label">WORKSPACE</p><nav aria-label="Admin navigation">${nav.map(([id, symbol, label]) => `<a href="#${id}" class="nav-item ${id === route ? "active" : ""}" ${id === route ? 'aria-current="page"' : ""}>${icon(symbol)}<span>${label}</span>${id === "appointments" && pending ? `<span class="nav-count">${pending}</span>` : ""}</a>`).join("")}</nav><div class="sidebar-bottom"><div class="sidebar-note">${icon("sun")}<strong>A little care, behind the scenes.</strong><p>A calm space to keep your salon beautifully organized.</p></div><a class="view-site" href="/" target="_blank" rel="noopener">${icon("external")}View customer website${icon("arrow")}</a><div class="owner"><span class="owner-avatar">${esc(config.name[0].toUpperCase())}</span><span>${isSuperadmin ? "Superadmin" : "Salon admin"}<small>${esc(session.user.email)}</small></span></div></div></aside>
     <div class="app-shell"><header class="topbar"><div class="breadcrumb"><button class="icon-btn mobile-menu" aria-label="Toggle admin navigation" aria-expanded="false" aria-controls="sidebar" data-action="menu">${icon("grid")}</button><span>Workspace</span>${icon("chevron")}<strong>${title}</strong></div><div class="topbar-actions"><button class="btn btn-secondary" data-action="logout">Sign out</button><button class="icon-btn" data-action="theme" aria-label="Switch light or dark theme">${icon("sun")}</button><span class="topbar-avatar">${esc(config.name[0].toUpperCase())}</span></div></header>
-    <main id="admin-main" tabindex="-1"><div class="demo-notice">${icon("sun")}<span><strong>Your salon, connected.</strong> Website settings, appointments and portal conversations are saved to your salon database.</span><a href="#settings" data-settings-tab="data">Data & setup ${icon("arrow")}</a></div>${storageError ? `<div class="error-banner" role="alert">${esc(storageError)}</div>` : ""}${route === "overview" ? overview() : route === "appointments" ? appointments() : route === "conversations" ? '<section id="admin-conversations" aria-label="Website conversations"></section>' : route === "services" ? services() : route === "gallery" ? gallery() : route === "locations" ? locations() : route === "reviews" ? reviews() : settings()}</main>
+    <main id="admin-main" tabindex="-1"><div class="demo-notice">${icon("sun")}<span><strong>Your salon, connected.</strong> Website settings, appointments and portal conversations are saved to your salon database.</span>${isSuperadmin ? `<a href="#settings" data-settings-tab="data">Data & setup ${icon("arrow")}</a>` : ""}</div>${storageError ? `<div class="error-banner" role="alert">${esc(storageError)}</div>` : ""}${route === "overview" ? overview() : route === "appointments" ? appointments() : route === "conversations" ? '<section id="admin-conversations" aria-label="Website conversations"></section>' : route === "reports" ? '<section id="admin-reports" aria-label="Clients and earnings"></section>' : route === "offers" ? offers() : route === "services" ? services() : route === "gallery" ? gallery() : route === "locations" ? locations() : route === "reviews" ? reviews() : route === "accounts" ? '<section id="admin-accounts" aria-label="Admin accounts"></section>' : settings()}</main>
     <footer class="admin-footer"><span>${esc(config.name)} studio manager</span><span>Shared salon workspace <i>✧</i> Thoughtfully organized</span></footer></div>`;
   bindPage();
+  if (route === "reports")
+    mountReports(document.querySelector("#admin-reports"), config);
+  if (route === "accounts" && isSuperadmin)
+    mountAdminAccounts(document.querySelector("#admin-accounts"));
   if (route === "conversations")
     mountAdminChat(document.querySelector("#admin-conversations"), config);
 }
@@ -211,7 +240,7 @@ function overview() {
   return `${pageHeading("YOUR STUDIO AT A GLANCE", "A beautiful day starts here.", `Welcome to ${esc(config.name)}. Let’s take care of the little details.`, `<span class="today-label">${icon("calendar")}${dateLabel(day, { weekday: "short", month: "short", day: "numeric", year: "numeric" })}</span>${action("new-request", "New appointment")}`)}
     <div class="stats-grid">${stats.map(([label, value, detail, symbol, color]) => `<article class="stat-card"><div class="stat-top"><span>${label}</span><span class="stat-icon ${color}">${icon(symbol)}</span></div><strong>${value.toString().padStart(2, "0")}</strong><small>${detail}</small></article>`).join("")}</div>
     <div class="overview-grid"><div class="overview-main"><section class="panel schedule-panel"><div class="panel-heading"><div><h2>Your appointment diary</h2><p>${dateLabel(selectedDay, { weekday: "long", month: "long", day: "numeric" })} <span class="count-label">${list.length} ${list.length === 1 ? "appointment" : "appointments"}</span></p></div><a class="subtle-link" href="#appointments">View all ${icon("arrow")}</a></div>${list.length ? `<div class="diary-list">${list.map((item) => `<button class="diary-row" data-request="${esc(item.id)}"><time>${timeLabel(item.datetime)}</time><span class="diary-marker ${item.status.toLowerCase()}"></span><span class="guest-avatar">${initials(item.name)}</span><span class="diary-person"><strong>${esc(item.name)}</strong><small>${esc(item.serviceName)} <span>·</span> ${esc(item.branchName)}</small></span>${badge(item.status)}${icon("chevron")}</button>`).join("")}</div>` : empty("Room for a little self-care.", "No appointments for this date. Add a request or load clearly marked samples to explore the diary.", `${action("new-request", "Add an appointment")}${!requests.length ? '<button class="btn btn-secondary" data-action="samples">Load sample requests</button>' : ""}`)}</section>
-    <section class="quick-start"><div><p class="eyebrow">YOUR WEBSITE, YOUR WAY</p><h2>Keep the glow going.</h2><p>A fresh service, a beautiful new photo, a little update.<br>Your next change is just a moment away.</p><a class="subtle-link" href="/" target="_blank" rel="noopener">Preview your customer website ${icon("external")}</a></div><div class="quick-actions"><button data-action="new-service">${icon("scissors")}<span>Add a service<small>Keep your menu fresh</small></span>${icon("plus")}</button><button data-action="new-photo">${icon("image")}<span>Add a gallery photo<small>Let your work shine</small></span>${icon("plus")}</button><a href="#settings">${icon("settings")}<span>Update website details<small>Make it feel like you</small></span>${icon("arrow")}</a></div></section></div>
+    <section class="quick-start"><div><p class="eyebrow">YOUR WEBSITE, YOUR WAY</p><h2>Keep the glow going.</h2><p>A fresh service, a beautiful new photo, a little update.<br>Your next change is just a moment away.</p><a class="subtle-link" href="/" target="_blank" rel="noopener">Preview your customer website ${icon("external")}</a></div><div class="quick-actions"><button data-action="new-service">${icon("scissors")}<span>Add a service<small>Keep your menu fresh</small></span>${icon("plus")}</button><button data-action="new-photo">${icon("image")}<span>Add a gallery photo<small>Let your work shine</small></span>${icon("plus")}</button>${isSuperadmin ? `<a href="#settings">${icon("settings")}<span>Update website details<small>Make it feel like you</small></span>${icon("arrow")}</a>` : ""}</div></section></div>
     <div class="overview-aside">${calendar()}<section class="panel setup-panel"><div class="panel-heading"><h2>A little launch checklist</h2><span class="setup-spark">✧</span></div>${[
       [!config.demoMode, "Replace fictional demo content"],
       [
@@ -227,7 +256,7 @@ function overview() {
     ]
       .map(
         ([done, label]) =>
-          `<a href="#settings"><span class="check-circle ${done ? "done" : ""}">${done ? icon("check") : ""}</span><span>${label}</span>${icon("chevron")}</a>`,
+          `<a href="${isSuperadmin ? "#settings" : "#locations"}"><span class="check-circle ${done ? "done" : ""}">${done ? icon("check") : ""}</span><span>${label}</span>${icon("chevron")}</a>`,
       )
       .join(
         "",
@@ -265,28 +294,211 @@ function filteredRequests() {
       (item) =>
         (statusFilter === "all" || item.status === statusFilter) &&
         (branchFilter === "all" || item.branchId === branchFilter) &&
+        (paymentFilter === "all" ||
+          paymentRecord(item, config.currency).status === paymentFilter) &&
         (!query ||
-          [item.name, item.phone, item.serviceName, item.branchName].some(
-            (text) => text.toLowerCase().includes(query),
-          )),
+          [
+            item.name,
+            item.phone,
+            item.serviceName,
+            item.branchName,
+            item.payment?.reference || "",
+          ].some((text) => text.toLowerCase().includes(query))),
     )
     .sort((a, b) => b.datetime.localeCompare(a.datetime));
+}
+function billingFields(request) {
+  const bill =
+    request?.billing ||
+    calculateBill(
+      request?.price || 0,
+      request?.payment?.currency || config.currency,
+    );
+  const offerOptions = [
+    ["manual", "Manual discount / no offer"],
+    ...(bill.offerId
+      ? [["saved", `Keep saved offer: ${bill.discountLabel}`]]
+      : []),
+    ...activeOffers(config).map((offer) => [offer.id, offer.title]),
+  ];
+  return `<fieldset class="field-wide payment-fields"><legend>Bill & discount</legend><div class="fields-grid">${field(`Bill before discount (${bill.currency})`, "billSubtotal", request ? bill.subtotal : "", "number", false, "For a new request, leave blank to use the service price.")}${selectField("Apply offer", "billOffer", offerOptions, bill.offerId ? "saved" : "manual")}${selectField(
+    "Manual discount type",
+    "billDiscountType",
+    DISCOUNT_TYPES.map((type) => [type, type]),
+    bill.discountType,
+  )}${field("Manual discount value", "billDiscountValue", bill.discountValue, "number", true)}${field("Manual discount reason", "billDiscountLabel", bill.discountLabel, "text", false, "An offer replaces the manual discount; discounts do not stack.")}</div><p id="bill-preview" role="status"></p></fieldset>`;
+}
+function readBilling(values, request) {
+  const currency =
+    request?.billing?.currency || request?.payment?.currency || config.currency;
+  const service = config.services
+    .flatMap((category) => category.items)
+    .find((item) => item.id === values.service);
+  const subtotal =
+    values.billSubtotal === ""
+      ? (request?.price ?? service?.price ?? 0)
+      : Number(values.billSubtotal);
+  let discount = {
+    type: values.billDiscountType,
+    value: Number(values.billDiscountValue),
+    label: values.billDiscountLabel.trim(),
+  };
+  if (values.billOffer === "saved" && request?.billing)
+    discount = {
+      type: request.billing.discountType,
+      value: request.billing.discountValue,
+      label: request.billing.discountLabel,
+      offerId: request.billing.offerId,
+    };
+  else if (values.billOffer !== "manual") {
+    const bill = bookingBill(
+      {
+        service: request?.serviceId || values.service,
+        branch: request?.branchId || values.branch,
+        datetime: values.datetime,
+        offerId: values.billOffer,
+      },
+      config,
+    );
+    if (
+      bill.discountType === "Fixed" &&
+      bill.currency !== currency.toUpperCase()
+    )
+      throw new Error(
+        "This fixed offer uses another currency. Choose a matching offer or a manual discount.",
+      );
+    discount = {
+      type: bill.discountType,
+      value: bill.discountValue,
+      label: bill.discountLabel,
+      offerId: bill.offerId,
+    };
+  }
+  return calculateBill(subtotal, currency, discount);
+}
+function paymentLabel(request) {
+  const payment = paymentRecord(request, config.currency);
+  const amount = new Intl.NumberFormat(config.locale, {
+    style: "currency",
+    currency: payment.currency,
+  }).format(payment.amount);
+  return `<strong>${esc(payment.status)}</strong><small>${esc(payment.method)}${payment.amount > 0 ? ` · ${esc(amount)}` : ""}</small>${payment.reference ? `<small>${esc(payment.reference)}</small>` : ""}`;
+}
+function paymentFields(request) {
+  const payment = paymentRecord(request || {}, config.currency);
+  const labels = {
+    Unrecorded: "Not recorded yet",
+    Cash: "Cash (in salon)",
+    Card: "Card / POS (in salon)",
+    Online: "Online transfer",
+  };
+  return `<fieldset class="field-wide payment-fields"><legend>Payment record</legend><p>This is a manual salon record. Check your cash receipt, bank or payment provider before marking a payment received. No online payment is collected or verified by this form. Reducing an amount records an adjustment; it does not refund money.</p><div class="fields-grid">${selectField(
+    "Payment method",
+    "paymentMethod",
+    PAYMENT_METHODS.map((method) => [method, labels[method]]),
+    payment.method,
+  )}${selectField(
+    "Payment status",
+    "paymentStatus",
+    PAYMENT_STATUSES.map((status) => [
+      status,
+      status === "Partial" ? "Partially paid" : status,
+    ]),
+    payment.status,
+  )}${field(`Amount received (${esc(payment.currency)})`, "paymentAmount", payment.amount, "number", true, "Use 0 for Pending. Record a deposit as Partial.")}${field("Payment received / adjustment date", "paymentDate", payment.receivedOn || (payment.amount > 0 ? "" : today()), "date", false, "Used for new receipts or adjustments in monthly reports. Existing receipts keep their dates.")}${field("Transaction / receipt reference", "paymentReference", payment.reference, "text", false, "Required for received online payments; up to 120 characters.")}${field("Payment notes", "paymentNotes", payment.notes, "textarea", false, "Up to 500 characters. Do not enter card numbers or banking passwords.")}</div>${payment.updatedAt ? `<p>Last recorded by ${esc(payment.updatedBy)} on ${esc(new Intl.DateTimeFormat(config.locale, { dateStyle: "medium", timeStyle: "short", timeZone: config.timeZone }).format(new Date(payment.updatedAt)))} (${esc(config.timeZone)}).</p>` : ""}${payment.entries?.length ? `<details><summary>Payment history (${payment.entries.length} entries)</summary><div class="table-scroll"><table><thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>Reference</th><th>Recorded by</th></tr></thead><tbody>${payment.entries.map((entry) => `<tr><td>${esc(entry.date || "Date missing")}</td><td>${esc(new Intl.NumberFormat(config.locale, { style: "currency", currency: entry.currency }).format(entry.amount))}</td><td>${esc(entry.method)}</td><td>${esc(entry.reference)}</td><td>${esc(entry.recordedBy)}</td></tr>`).join("")}</tbody></table></div></details>` : ""}</fieldset>`;
 }
 function appointmentRows() {
   const list = filteredRequests();
   if (!list.length)
-    return `<td colspan="6">${empty(requests.length ? "No matching appointments." : "Your inbox has room to grow.", requests.length ? "Try another search or clear the filters." : "Add a request manually or receive an enquiry from the customer website.", requests.length ? '<button class="btn btn-secondary" data-action="clear-filters">Clear filters</button>' : action("new-request", "Add an appointment"))}</td>`;
+    return `<td colspan="7">${empty(requests.length ? "No matching appointments." : "Your inbox has room to grow.", requests.length ? "Try another search or clear the filters." : "Add a request manually or receive an enquiry from the customer website.", requests.length ? '<button class="btn btn-secondary" data-action="clear-filters">Clear filters</button>' : action("new-request", "Add an appointment"))}</td>`;
   return list
     .map(
       (item) =>
-        `<tr><td><button class="guest-cell" data-request="${esc(item.id)}"><span class="guest-avatar">${initials(item.name)}</span><span><strong>${esc(item.name)}</strong><small>${esc(item.phone)}</small></span></button></td><td><strong>${esc(item.serviceName)}</strong><small>${esc(item.branchName)}</small></td><td><strong>${dateLabel(item.datetime)}</strong><small>${timeLabel(item.datetime)}</small></td><td>${badge(item.status)}</td><td><span class="source-label">${esc(item.source)}</span></td><td><button class="icon-btn" data-request="${esc(item.id)}" aria-label="Manage appointment for ${esc(item.name)}">${icon("chevron")}</button></td></tr>`,
+        `<tr><td><button class="guest-cell" data-request="${esc(item.id)}"><span class="guest-avatar">${initials(item.name)}</span><span><strong>${esc(item.name)}</strong><small>${esc(item.phone)}</small></span></button></td><td><strong>${esc(item.serviceName)}</strong><small>${esc(item.branchName)}</small></td><td><strong>${dateLabel(item.datetime)}</strong><small>${timeLabel(item.datetime)}</small></td><td>${badge(item.status)}</td><td>${paymentLabel(item)}</td><td><span class="source-label">${esc(item.source)}</span></td><td><button class="icon-btn" data-request="${esc(item.id)}" aria-label="Manage appointment for ${esc(item.name)}">${icon("chevron")}</button></td></tr>`,
     )
     .join("");
 }
 function appointments() {
-  return `${pageHeading("THE APPOINTMENT BOOK", "A little time, well organized.", "Review requests and keep every appointment detail in one place.", `${action("export-requests", "Export requests", "download")}${action("new-request", "New appointment")}`)}<section class="panel"><div class="filter-bar"><label class="search-field">${icon("search")}<input id="request-search" type="search" aria-label="Search appointments" placeholder="Search names, services, phone…" value="${esc(search)}"></label><label class="filter-select"><span class="sr-only">Filter by status</span><select id="status-filter"><option value="all">All statuses</option>${STATUSES.map((status) => `<option ${status === statusFilter ? "selected" : ""}>${status}</option>`).join("")}</select></label><label class="filter-select"><span class="sr-only">Filter by location</span><select id="branch-filter"><option value="all">All locations</option>${config.branches.map((branch) => `<option value="${esc(branch.id)}" ${branch.id === branchFilter ? "selected" : ""}>${esc(branch.name)}</option>`).join("")}</select></label><span id="result-count">${filteredRequests().length} requests</span></div><div class="table-scroll"><table><thead><tr><th>Guest</th><th>Service & studio</th><th>Preferred time</th><th>Status</th><th>Source</th><th><span class="sr-only">Manage</span></th></tr></thead><tbody id="request-rows">${appointmentRows()}</tbody></table></div><div class="table-foot"><span>Times shown in ${esc(config.timeZone)}. Status changes do not automatically notify guests.</span>${action("samples", "Load sample requests", "plus")}</div></section>`;
+  return `${pageHeading("THE APPOINTMENT BOOK", "A little time, well organized.", "Review requests and keep every appointment detail in one place.", `${action("export-requests", "Export requests", "download")}${action("new-request", "New appointment")}`)}<section class="panel"><div class="filter-bar"><label class="search-field">${icon("search")}<input id="request-search" type="search" aria-label="Search appointments" placeholder="Search names, services, phone…" value="${esc(search)}"></label><label class="filter-select"><span class="sr-only">Filter by status</span><select id="status-filter"><option value="all">All statuses</option>${STATUSES.map((status) => `<option ${status === statusFilter ? "selected" : ""}>${status}</option>`).join("")}</select></label><label class="filter-select"><span class="sr-only">Filter by location</span><select id="branch-filter"><option value="all">All locations</option>${config.branches.map((branch) => `<option value="${esc(branch.id)}" ${branch.id === branchFilter ? "selected" : ""}>${esc(branch.name)}</option>`).join("")}</select></label><label class="filter-select"><span class="sr-only">Filter by payment status</span><select id="payment-filter"><option value="all">All payments</option>${PAYMENT_STATUSES.map((status) => `<option ${status === paymentFilter ? "selected" : ""}>${status}</option>`).join("")}</select></label><span id="result-count">${filteredRequests().length} requests</span></div><div class="table-scroll"><table><thead><tr><th>Guest</th><th>Service & studio</th><th>Preferred time</th><th>Status</th><th>Payment</th><th>Source</th><th><span class="sr-only">Manage</span></th></tr></thead><tbody id="request-rows">${appointmentRows()}</tbody></table></div><div class="table-foot"><span>Times shown in ${esc(config.timeZone)}. Status changes do not automatically notify guests.</span>${action("samples", "Load sample requests", "plus")}</div></section>`;
 }
 
+function offers() {
+  const active = new Set(activeOffers(config).map((item) => item.id));
+  return `${pageHeading("A LITTLE EXTRA CARE", "Deals & offers.", "Publish a discount for selected services, locations and appointment dates.", action("new-offer", "Add offer"))}<div class="offer-admin-grid">${(config.offers || []).map((offer, index) => `<article class="panel settings-panel"><p class="eyebrow">${offer.enabled ? (active.has(offer.id) ? "ACTIVE" : "OUTSIDE ACTIVE DATES / CURRENCY") : "PAUSED"}</p><h2>${esc(offer.title)}</h2><p>${esc(offer.description)}</p><p><strong>${offer.type === "Percent" ? `${offer.value}% off` : `${esc(new Intl.NumberFormat(config.locale, { style: "currency", currency: offer.currency }).format(offer.value))} off`}</strong></p><p>${esc(offer.startDate || "No start limit")} to ${esc(offer.endDate || "No end limit")}<br>${offer.serviceIds.length ? offer.serviceIds.length + " selected services" : "All services"} · ${offer.branchIds.length ? offer.branchIds.length + " selected locations" : "All locations"}</p><button class="btn btn-secondary" data-edit-offer="${index}">Edit offer</button></article>`).join("")}</div>${!config.offers?.length ? empty("Create your first offer.", "Add a percentage or fixed-amount discount. Enable it when it is ready to appear on the public website.", action("new-offer", "Add offer")) : ""}`;
+}
+function editOffer(index = -1) {
+  const offer = config.offers?.[index];
+  const scope = (label, name, options, selected) =>
+    `<fieldset class="field-wide offer-scope"><legend>${label}</legend><p>Leave all unchecked to apply to every ${name === "offerServices" ? "service" : "location"}.</p>${options.map(([id, label]) => `<label><input type="checkbox" name="${name}" value="${esc(id)}" ${selected.includes(id) ? "checked" : ""}><span>${esc(label)}</span></label>`).join("")}</fieldset>`;
+  openEditor(
+    offer ? "Edit offer" : "Create an offer",
+    "Active offers appear on the public website. A booking can use one offer or one manual discount; discounts do not stack.",
+    `${field("Offer title", "offerTitle", offer?.title || "", "text", true)}${selectField(
+      "Publication",
+      "offerEnabled",
+      [
+        ["yes", "Active"],
+        ["no", "Paused"],
+      ],
+      offer?.enabled ? "yes" : "no",
+    )}${field("Description", "offerDescription", offer?.description || "", "textarea")}${selectField(
+      "Discount type",
+      "offerType",
+      [
+        ["Percent", "Percentage"],
+        ["Fixed", `Fixed amount (${config.currency})`],
+      ],
+      offer?.type || "Percent",
+    )}${field("Discount value", "offerValue", offer?.value || 10, "number", true)}${field("Start date", "offerStart", offer?.startDate || "", "date")}${field("End date", "offerEnd", offer?.endDate || "", "date")}${scope(
+      "Eligible services",
+      "offerServices",
+      config.services.flatMap((category) =>
+        category.items.map((item) => [
+          item.id,
+          `${category.name} · ${item.name}`,
+        ]),
+      ),
+      offer?.serviceIds || [],
+    )}${scope(
+      "Eligible locations",
+      "offerBranches",
+      config.branches.map((branch) => [branch.id, branch.name]),
+      offer?.branchIds || [],
+    )}`,
+    async (values) => {
+      const next = structuredClone(config);
+      next.offers ||= [];
+      const updated = {
+        id: offer?.id || crypto.randomUUID(),
+        title: values.offerTitle.trim(),
+        description: values.offerDescription.trim(),
+        enabled: values.offerEnabled === "yes",
+        type: values.offerType,
+        value: Number(values.offerValue),
+        currency: config.currency.toUpperCase(),
+        startDate: values.offerStart,
+        endDate: values.offerEnd,
+        serviceIds: [
+          ...dialog.querySelectorAll('[name="offerServices"]:checked'),
+        ].map((input) => input.value),
+        branchIds: [
+          ...dialog.querySelectorAll('[name="offerBranches"]:checked'),
+        ].map((input) => input.value),
+      };
+      if (offer) next.offers[index] = updated;
+      else next.offers.push(updated);
+      await persistConfig(next);
+    },
+    offer
+      ? () => {
+          const next = structuredClone(config);
+          next.offers.splice(index, 1);
+          return persistConfig(next);
+        }
+      : null,
+    "Save offer",
+  );
+}
 function services() {
   return `${pageHeading("THE BEAUTY MENU", "Good care starts with the details.", "Manage your service names, starting prices and appointment lengths.", `${action("new-category", "New category")}${action("new-service", "New service")}`)}<div class="category-grid">${config.services.map((category, index) => `<section class="panel category-panel"><div class="category-cover"><img src="${esc(category.image)}" alt="${esc(category.alt)}"><div><span>${category.items.length} SERVICES</span><h2>${esc(category.name)}</h2></div><button class="icon-btn" data-edit-category="${index}" aria-label="Edit ${esc(category.name)} category">${icon("edit")}</button></div><p class="category-description">${esc(category.subtitle)}</p><div class="service-admin-list">${category.items.map((item, itemIndex) => `<button data-edit-service="${index}:${itemIndex}"><span><strong>${esc(item.name)}</strong><small>${esc(item.duration)}</small></span><strong>${money(item.price)}</strong>${icon("edit")}</button>`).join("")}</div><button class="category-add" data-add-service="${index}">${icon("plus")}Add a service</button></section>`).join("")}</div>`;
 }
@@ -294,7 +506,7 @@ function gallery() {
   return `${pageHeading("YOUR WORK, IN FOCUS", "Let the little details shine.", "Manage the images and captions on your customer website.", action("new-photo", "Add a photo"))}<div class="info-line">${icon("image")} Demo stock photos are illustrative. Use your own permissioned work before launch.</div><div class="photo-grid">${config.gallery.map((photo, index) => `<article class="panel photo-card"><div class="photo-card-image"><img src="${esc(photo.image)}" alt="${esc(photo.alt)}" loading="lazy"><span>${esc(photo.category)}</span></div><div class="photo-card-copy"><div><h2>${esc(photo.label)}</h2><p>${esc(photo.alt)}</p></div><button class="icon-btn" data-edit-photo="${index}" aria-label="Edit ${esc(photo.label)}">${icon("edit")}</button></div></article>`).join("")}</div>${!config.gallery.length ? empty("Make room for your beautiful work.", "Add your first gallery image to show it on the customer website.", action("new-photo", "Add a photo")) : ""}`;
 }
 function locations() {
-  return `${pageHeading("YOUR STUDIO SPACES", "A place for every little ritual.", "Keep location details, directions and opening hours up to date.", action("new-location", "Add a location"))}<div class="location-grid">${config.branches.map((branch, index) => `<article class="panel location-card"><img src="${esc(branch.image)}" alt="${esc(branch.imageAlt)}"><div><span class="eyebrow">${esc(branch.label)}</span><h2>${esc(branch.name)}</h2><p>${esc(branch.description)}</p><p class="location-address">${icon("pin")}${esc(branch.address || "No address added · Demo location")}</p><dl>${branch.hours.map((hour) => `<div><dt>${esc(hour.days)}</dt><dd>${esc(hour.time)}</dd></div>`).join("")}</dl><button class="btn btn-secondary" data-edit-location="${index}">${icon("edit")}Edit location</button></div></article>`).join("")}</div>`;
+  return `${pageHeading("YOUR STUDIO SPACES", "A place for every little ritual.", "Keep location details, directions and opening hours up to date.", action("new-location", "Add a location"))}<div class="location-grid">${config.branches.map((branch, index) => `<article class="panel location-card"><img src="${esc(branch.image)}" alt="${esc(branch.imageAlt)}"><div><span class="eyebrow">${esc(branch.label)}</span><h2>${esc(branch.name)}</h2><p>${esc(branch.description)}</p><p class="location-address">${icon("pin")}${esc(branch.address || "No address added · Demo location")}</p><dl>${branch.hours.map((hour) => `<div><dt>${esc(hour.days)}</dt><dd>${esc(hour.time)}</dd></div>`).join("")}</dl><button class="btn btn-secondary" data-edit-location="${index}">${icon("edit")}Edit location</button>${googleMapsLink(branch.address) ? `<a class="subtle-link" href="${esc(googleMapsLink(branch.address))}" target="_blank" rel="noopener noreferrer" aria-label="Open in Google Maps: ${esc(branch.name)}">${icon("pin")}Open in Google Maps ${icon("external")}</a>` : ""}</div></article>`).join("")}</div>`;
 }
 function reviews() {
   return `${pageHeading("WORDS AFTER THE GLOW", "Kind words, thoughtfully kept.", "These testimonials remain clearly marked as demo content on the website.", action("new-review", "Add demo review"))}<div class="review-admin-grid">${config.reviews.map((review, index) => `<article class="panel review-admin-card"><span class="review-quote">“</span><blockquote>${esc(review.quote)}</blockquote><strong>${esc(review.name)}</strong><p>${esc(review.service)} · Demo</p><button class="btn btn-secondary" data-edit-review="${index}">${icon("edit")}Edit review</button></article>`).join("")}</div>${!config.reviews.length ? empty("A space for kind words.", "Add illustrative copy here, clearly marked as demo content.", action("new-review", "Add demo review")) : ""}`;
@@ -329,6 +541,7 @@ function parseHours(value) {
   return result;
 }
 function settings() {
+  if (!isSuperadmin) return "";
   const tabs = [
     ["identity", "Salon & contact"],
     ["homepage", "Homepage"],
@@ -355,7 +568,7 @@ function settings() {
       .join(
         "",
       )}${field("Page title", "seo.title", config.seo.title, "text", true)}${field("Meta description", "seo.description", config.seo.description, "textarea", true)}${field("Production website URL", "website", config.website, "url")}${field("Favicon path", "favicon", config.favicon)}<p class="field-wide helper-box">Saved edits update the shared database immediately. The public website reads these settings when it loads. Demo content and review notices are preserved.</p>`;
-  return `${pageHeading("MAKE THE STUDIO YOURS", "The details behind the glow.", "Manage the shared settings used by your public website and salon dashboard.")}<div class="settings-layout"><nav class="settings-nav" aria-label="Settings sections">${tabs.map(([id, label]) => `<button data-tab="${id}" class="${id === viewTab ? "active" : ""}" aria-pressed="${id === viewTab}">${label}${icon("chevron")}</button>`).join("")}</nav><section class="panel settings-panel"><h2>${tabs.find(([id]) => id === viewTab)[1]}</h2>${viewTab === "data" ? `<p>Your salon settings, appointment requests and portal conversations are stored in the application database. Only signed-in authorized admins can access this workspace.</p><div class="data-callout">${icon("settings")}<div><strong>Ready for a real salon?</strong><p>Keep database backups and use HTTPS in production. Website conversations are connected. WhatsApp is a handoff only; no WhatsApp Business API credentials or webhook integration are configured.</p></div></div><div class="data-actions"><div><strong>Export website configuration</strong><p>Download the current database settings as a configuration file or importable JSON backup. No export or rebuild is needed to publish saved admin changes.</p><button class="btn" data-action="export-config">${icon("download")}Export configuration .js</button><button class="btn btn-secondary" data-action="export-json">Export JSON</button></div><div><strong>Import website configuration</strong><p>Import a previously exported JSON file. Existing settings will be replaced only after validation and your confirmation.</p><label class="btn btn-secondary file-label">Choose JSON file<input id="import-config" type="file" accept="application/json,.json"></label></div><div><strong>Appointment backup</strong><p>Download the salon inbox as JSON. Keep guest information private. This file is a backup, not a server submission.</p><button class="btn btn-secondary" data-action="export-requests">${icon("download")}Export requests</button><label class="btn btn-secondary file-label">Restore request backup<input id="import-requests" type="file" accept="application/json,.json"></label></div><div><strong>Sample data</strong><p>Load clearly labeled fictional requests to explore the dashboard. Removing samples preserves your other requests.</p><button class="btn btn-secondary" data-action="samples">Load sample requests</button><button class="btn btn-danger" data-action="remove-samples">Remove sample requests</button></div><div><strong>Restore original website settings</strong><p>Restores the original website settings in the database. Appointment requests are preserved. Export your edits first if you need them.</p><button class="btn btn-danger" data-action="reset-config">Restore default settings</button></div></div>` : `<form id="settings-form"><div class="fields-grid">${fields}</div><p class="form-error" role="alert"></p><div class="settings-save"><span>Saved changes appear on the public website on its next load.</span><button class="btn" type="submit">${icon("check")}Save website changes</button></div></form>`}</section></div>`;
+  return `${pageHeading("MAKE THE STUDIO YOURS", "The details behind the glow.", "Manage the shared settings used by your public website and salon dashboard.")}<div class="settings-layout"><nav class="settings-nav" aria-label="Settings sections">${tabs.map(([id, label]) => `<button data-tab="${id}" class="${id === viewTab ? "active" : ""}" aria-pressed="${id === viewTab}">${label}${icon("chevron")}</button>`).join("")}</nav><section class="panel settings-panel"><h2>${tabs.find(([id]) => id === viewTab)[1]}</h2>${viewTab === "data" ? `<p><strong>Database: ${esc(system?.database || "Unavailable")}</strong> - Superadmin access</p><p>Your salon settings, appointment requests and portal conversations are stored in the application database. Only signed-in authorized admins can access this workspace.</p><div class="data-callout">${icon("settings")}<div><strong>Ready for a real salon?</strong><p>Keep database backups and use HTTPS in production. Website conversations are connected. WhatsApp is a handoff only; no WhatsApp Business API credentials or webhook integration are configured.</p></div></div><div class="data-actions"><div><strong>Export website configuration</strong><p>Download the current database settings as a configuration file or importable JSON backup. No export or rebuild is needed to publish saved admin changes.</p><button class="btn" data-action="export-config">${icon("download")}Export configuration .js</button><button class="btn btn-secondary" data-action="export-json">Export JSON</button></div><div><strong>Import website configuration</strong><p>Import a previously exported JSON file. Existing settings will be replaced only after validation and your confirmation.</p><label class="btn btn-secondary file-label">Choose JSON file<input id="import-config" type="file" accept="application/json,.json"></label></div><div><strong>Appointment backup</strong><p>Download the salon inbox as JSON. Keep guest information private. This file is a backup, not a server submission.</p><button class="btn btn-secondary" data-action="export-requests">${icon("download")}Export requests</button><label class="btn btn-secondary file-label">Restore request backup<input id="import-requests" type="file" accept="application/json,.json"></label></div><div><strong>Sample data</strong><p>Load clearly labeled fictional requests to explore the dashboard. Removing samples preserves your other requests.</p><button class="btn btn-secondary" data-action="samples">Load sample requests</button><button class="btn btn-danger" data-action="remove-samples">Remove sample requests</button></div><div><strong>Restore original website settings</strong><p>Restores the original website settings in the database. Appointment requests are preserved. Export your edits first if you need them.</p><button class="btn btn-danger" data-action="reset-config">Restore default settings</button></div></div>` : `<form id="settings-form"><div class="fields-grid">${fields}</div><p class="form-error" role="alert"></p><div class="settings-save"><span>Saved changes appear on the public website on its next load.</span><button class="btn" type="submit">${icon("check")}Save website changes</button></div></form>`}</section></div>`;
 }
 
 function openEditor(
@@ -459,7 +672,7 @@ function selectField(label, name, options, value = "") {
 function editRequest(id) {
   const request = requests.find((item) => item.id === id);
   const isNew = !request;
-  const fields = request
+  let fields = request
     ? `<div class="request-detail field-wide"><span class="guest-avatar">${initials(request.name)}</span><div><h3>${esc(request.name)}</h3><p>${esc(request.phone)} · ${esc(request.source)}</p></div></div><dl class="detail-list field-wide"><div><dt>Service</dt><dd>${esc(request.serviceName)}</dd></div><div><dt>Studio</dt><dd>${esc(request.branchName)}</dd></div></dl>${field("Preferred date & time", "datetime", request.datetime, "datetime-local", true, `Salon timezone: ${esc(config.timeZone)}`)}${selectField(
         "Status",
         "status",
@@ -480,6 +693,7 @@ function editRequest(id) {
         "branch",
         config.branches.map((branch) => [branch.id, branch.name]),
       )}${field("Preferred date & time", "datetime", `${selectedDay}T10:00`, "datetime-local", true, `Salon timezone: ${esc(config.timeZone)}`)}${field("Internal notes", "notes", "", "textarea")}`;
+  fields += billingFields(request) + paymentFields(request);
   openEditor(
     isNew ? "A new moment of care." : "Appointment details",
     isNew
@@ -487,13 +701,32 @@ function editRequest(id) {
       : "Review the request and update your salon diary. No notification is sent.",
     fields,
     async (values) => {
+      const billing = readBilling(values, request);
+      const before = paymentRecord(request || {}, config.currency);
+      const payment = validatePayment(
+        {
+          ...before,
+          method: values.paymentMethod,
+          status: values.paymentStatus,
+          amount: Number(values.paymentAmount),
+          reference: values.paymentReference.trim(),
+          notes: values.paymentNotes.trim(),
+          receivedOn: values.paymentDate,
+        },
+        { allowZeroPaid: billing.total === 0 },
+      );
       if (isNew) {
         const errors = validateBooking(values, config);
         if (Object.keys(errors).length)
           throw new Error(Object.values(errors).join(" "));
         await persistRequests([
           ...requests,
-          { ...makeRequest(values, config), notes: values.notes },
+          {
+            ...makeRequest({ ...values, offerId: "" }, config),
+            notes: values.notes,
+            payment,
+            billing,
+          },
         ]);
       } else {
         if (!values.datetime || !Number.isFinite(Date.parse(values.datetime)))
@@ -506,6 +739,8 @@ function editRequest(id) {
               ? {
                   ...item,
                   status: values.status,
+                  payment,
+                  billing,
                   datetime: values.datetime,
                   notes: values.notes,
                 }
@@ -514,11 +749,25 @@ function editRequest(id) {
         );
       }
     },
-    request
+    request && !request.payment?.amount && !request.payment?.entries?.length
       ? () => persistRequests(requests.filter((item) => item.id !== id))
       : null,
     isNew ? "Create request" : "Save appointment",
   );
+  const billingForm = dialog.querySelector("form");
+  const updateBill = () => {
+    try {
+      const values = Object.fromEntries(new FormData(billingForm));
+      const bill = readBilling(values, request);
+      billingForm.querySelector("#bill-preview").textContent =
+        `Discount: ${new Intl.NumberFormat(config.locale, { style: "currency", currency: bill.currency }).format(bill.discountAmount)}. Final bill: ${new Intl.NumberFormat(config.locale, { style: "currency", currency: bill.currency }).format(bill.total)}. Remaining: ${new Intl.NumberFormat(config.locale, { style: "currency", currency: bill.currency }).format(Math.max(0, bill.total - Number(values.paymentAmount || 0)))}.`;
+    } catch (error) {
+      billingForm.querySelector("#bill-preview").textContent = error.message;
+    }
+  };
+  billingForm.addEventListener("input", updateBill);
+  billingForm.addEventListener("change", updateBill);
+  updateBill();
 }
 function editService(categoryIndex = 0, itemIndex = -1) {
   const category = config.services[categoryIndex];
@@ -735,6 +984,7 @@ function bindPage() {
         if (action === "new-photo") editPhoto();
         if (action === "new-location") editLocation();
         if (action === "new-review") editReview();
+        if (action === "new-offer") editOffer();
         if (action === "menu") {
           const isOpen = document.body.classList.toggle("nav-open");
           button.setAttribute("aria-expanded", String(isOpen));
@@ -772,6 +1022,7 @@ function bindPage() {
           search = "";
           statusFilter = "all";
           branchFilter = "all";
+          paymentFilter = "all";
           render();
         }
         if (action === "export-config")
@@ -863,6 +1114,13 @@ function bindPage() {
         editReview(Number(button.dataset.editReview)),
       ),
     );
+  app
+    .querySelectorAll("[data-edit-offer]")
+    .forEach((button) =>
+      button.addEventListener("click", () =>
+        editOffer(Number(button.dataset.editOffer)),
+      ),
+    );
   app.querySelectorAll("[data-tab]").forEach((button) =>
     button.addEventListener("click", () => {
       const form = document.querySelector("#settings-form");
@@ -892,6 +1150,7 @@ function bindPage() {
         search = "";
         statusFilter = "all";
         branchFilter = "all";
+        paymentFilter = "all";
         render();
       });
     document
@@ -908,6 +1167,10 @@ function bindPage() {
   });
   app.querySelector("#branch-filter")?.addEventListener("change", (event) => {
     branchFilter = event.target.value;
+    updateTable();
+  });
+  app.querySelector("#payment-filter")?.addEventListener("change", (event) => {
+    paymentFilter = event.target.value;
     updateTable();
   });
   const settingsForm = app.querySelector("#settings-form");

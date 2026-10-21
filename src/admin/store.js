@@ -1,4 +1,6 @@
 import { salon as defaults } from "../salon.config.js";
+import { paymentRecord, validatePayment } from "./payments.js";
+import { validateOffers, bookingBill, validateBill } from "../pricing.js";
 
 export const STATUSES = ["Pending", "Confirmed", "Completed", "Cancelled"];
 
@@ -25,6 +27,7 @@ export function validateConfig(config) {
       throw new Error(`${path} is too long.`);
   }
   shape(config, defaults, "Salon");
+  if (config.offers !== undefined) validateOffers(config.offers, config);
   if (
     !config.name.trim() ||
     config.hero.title.length !== 3 ||
@@ -150,6 +153,11 @@ export function validateRequests(requests) {
         "The appointment backup contains missing or invalid fields.",
       );
     ids.add(item.id);
+    if (item.billing !== undefined) validateBill(item.billing);
+    if (item.payment !== undefined)
+      validatePayment(item.payment, {
+        allowZeroPaid: item.billing?.total === 0,
+      });
   }
   return requests;
 }
@@ -175,6 +183,8 @@ export function makeRequest(values, config, source = "Manual") {
     notes: "",
     source,
     createdAt: new Date().toISOString(),
+    payment: paymentRecord({}, config.currency),
+    billing: bookingBill(values, config),
   };
 }
 

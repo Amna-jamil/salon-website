@@ -1,7 +1,6 @@
 import { createInterface } from "node:readline/promises";
 import { Writable } from "node:stream";
-import { resolve } from "node:path";
-import { openDatabase } from "./database.js";
+import { openConfiguredDatabase } from "./database.js";
 import { hashPassword, provisionAdmin } from "./auth.js";
 
 const email = process.argv.slice(2).find((value) => !value.startsWith("--"));
@@ -10,9 +9,7 @@ if (!email)
   throw new Error(
     "Usage: npm run admin:create -- owner@example.com (or admin:password for an existing admin).",
   );
-const db = openDatabase(
-  resolve(process.env.DATABASE_PATH || "data/salon.sqlite"),
-);
+const db = await openConfiguredDatabase();
 // Password input is hidden on a terminal and never accepted in command-line arguments.
 const terminal = Boolean(process.stdin.isTTY);
 let muted = false;
@@ -30,16 +27,17 @@ try {
   muted = false;
   process.stdout.write("\n");
   if (reset) {
-    const user = db
+    const user = await db
       .prepare("SELECT id FROM users WHERE email=? AND role='admin'")
       .get(email.trim().toLowerCase());
     if (!user) throw new Error("No admin exists with this email.");
     const hash = await hashPassword(password);
-    db.prepare("UPDATE users SET password_hash=? WHERE id=?").run(
-      hash,
-      user.id,
-    );
-    db.prepare("DELETE FROM sessions WHERE user_id=?").run(user.id);
+    await db.transaction(async () => {
+      await db
+        .prepare("UPDATE users SET password_hash=? WHERE id=?")
+        .run(hash, user.id);
+      await db.prepare("DELETE FROM sessions WHERE user_id=?").run(user.id);
+    });
     console.log("Admin password reset. All existing sessions revoked.");
   } else {
     await provisionAdmin(db, email, password);
@@ -47,5 +45,5 @@ try {
   }
 } finally {
   prompt.close();
-  db.close();
+  await db.close();
 }
