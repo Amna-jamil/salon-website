@@ -144,7 +144,26 @@ Admins read and reply under **Customer conversations**. Portal replies appear ba
 
 There is **no configured WhatsApp Business API account, access token, phone-number ID or webhook integration** in this project. Full syncing would need an official Meta Business/WhatsApp Business setup, registered phone-number ID, appropriate access token, webhook verification secret, app signing secret and public HTTPS webhook subscription, followed by a verified message-delivery integration. Adding credentials alone will not enable syncing; the current application intentionally supports only the handoff. Consult [Meta’s official Cloud API setup](https://developers.facebook.com/docs/whatsapp/cloud-api/get-started).
 
-## One production deployment
+## Deploy on Vercel
+
+The repository includes `vercel.json` and an `api/index.js` function. Vite builds the frontend into `dist/`; Vercel serves images, fonts and JavaScript as static assets, and routes `/`, `/api/*` and `/admin/*` through the existing Express backend. The function includes the built HTML and database CA certificate. Admin page authorization and saved-settings metadata still run on the server.
+
+In the Vercel project, use the repository root, the **Vite** framework preset, **Node.js 24.x**, build command **`npm run build`**, and output directory **`dist`**. The build command, output directory and framework preset are also recorded in `vercel.json`. Add these values under **Settings → Environment Variables** for **Production** before redeploying:
+
+| Variable               | Value                                                                                                                                                      |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `APP_ORIGIN`           | `https://salon-website-five-iota.vercel.app` for the current production domain, without a trailing slash; update this when changing the production domain. |
+| `DATABASE_URL`         | The private salon backend Postgres connection string from your local `.env`.                                                                               |
+| `DATABASE_CA_PATH`     | `server/certs/supabase-ca.crt`                                                                                                                             |
+| `SUPABASE_PROJECT_REF` | The project reference from your local `.env` (optional when `DATABASE_URL` is set).                                                                        |
+
+Vercel does not receive your ignored local `.env`. Copy its private database values into the hosting environment, never into a `VITE_*` variable or Git. Do not add `DATABASE_PATH`: the function requires Postgres and will not create an ephemeral SQLite database. The Vercel entry point configures its trusted proxy automatically; local `HOST`, `PORT` and `TRUST_PROXY` settings are unnecessary there.
+
+Push the code and redeploy after setting the variables. Check **`/api/health`**, which should return **`{"ok":true}`**, then the homepage and `/admin/login`. If an API returns 503, inspect the function's runtime logs for a missing environment variable or database connection error. If `/api/salon` returns Vercel's 404 instead, the backend function/routing configuration has not been included in that deployment. An older frontend-only deployment produces the “We couldn’t load this page” screen because it cannot fetch salon settings.
+
+For preview deployments, use a separate environment/database and set `APP_ORIGIN` to the exact preview origin you intend to use. Requests that modify data must match this origin. In-memory rate limits apply per function instance, rather than globally across all instances. Request bodies are also subject to Vercel's function payload limit; keep large gallery images on hosted URLs.
+
+## Deploy as a persistent Node service
 
 ```sh
 npm ci
@@ -155,7 +174,7 @@ npm start
 
 Configure **`APP_ORIGIN=https://your-real-domain.example`**, without a trailing slash, before `npm start`. Production requires HTTPS at the public ingress, uses Secure cookies, and serves the built website, login, dashboard and all APIs from the same Node process. Set `HOST=0.0.0.0` when the host requires it, and set `PORT` to the host’s assigned port. `TRUST_PROXY=1` is available only for a topology with exactly one trusted reverse proxy; leave it unset otherwise.
 
-For Supabase, configure the hosting service with the same private `DATABASE_URL`, `SUPABASE_PROJECT_REF` and `DATABASE_CA_PATH`. The CA is included in the server build. The Node service must be able to reach the session pooler. Do not upload just `dist/` to a static host; the API, authentication and chat require this Node process. The supported setup is one Node service behind HTTPS; in-memory request limiting is per process.
+For Supabase, configure the hosting service with the same private `DATABASE_URL`, `SUPABASE_PROJECT_REF` and `DATABASE_CA_PATH`. The CA is included in the server build. The Node service must be able to reach the session pooler. Do not upload just `dist/` to a static host; the API, authentication and chat require the backend. For Vercel, use the function setup above. In-memory request limiting is per process.
 
 For SQLite-only local deployments, keep `DATABASE_PATH` on a private persistent volume and use SQLite-consistent backups. Never split production instances across separate local databases.
 
